@@ -39,3 +39,9 @@ func (r *CompraRepositoryDB) Save(ctx context.Context, compra entities.Compra) e
 	// Se tudo estiver OK, commit a transação
 	return tx.Commit()
 }
+
+func (r *CompraRepositoryDB) DeleteByIBMAndEntrada(ibm string, dtaEntrada string) error {
+	query := `DELETE FROM compras WHERE dtaentrada = $1 AND id IN (SELECT compra_id FROM ibms WHERE nro = $2)`
+	_, err := r.DB.Exec(query, dtaEntrada, ibm)
+	return err
+}
