@@ -11,7 +11,7 @@ import (
 )
 
 type Listener struct {
-	CompraUC usecases.CompraUseCase
+	CompraUC *usecases.CompraUseCase
 	// Adicione mais usecases conforme necessário
 }
 

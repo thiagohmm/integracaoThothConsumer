@@ -5,14 +5,14 @@ import (
 	"fmt"
 
 	"github.com/thiagohmm/integracaoThothConsumer/internal/domain/entities"
-	"github.com/thiagohmm/integracaoThothConsumer/internal/domain/entities/repositories"
+	// Ajustado para importar a interface correta
 )
 
 type CompraUseCase struct {
-	Repo repositories.CompraRepositoryDB
+	Repo entities.CompraRepository // Troquei CompraRepositoryDB por CompraRepository (interface)
 }
 
-func NewCompraUseCase(repo repositories.CompraRepositoryDB) *CompraUseCase {
+func NewCompraUseCase(repo entities.CompraRepository) *CompraUseCase {
 	return &CompraUseCase{Repo: repo}
 }
 
@@ -27,6 +27,11 @@ func (uc *CompraUseCase) ProcessarCompra(ctx context.Context, compraData map[str
 			compra.Compras.DtaEntrada = dtaentrada
 		} else {
 			return fmt.Errorf("campo 'dtaentrada' não encontrado ou com tipo incorreto")
+		}
+
+		err := uc.Repo.DeleteByIBMAndEntrada(ctx, compra.Compras.Ibms[0].Nro, compra.Compras.DtaEntrada)
+		if err != nil {
+			return err
 		}
 
 		// Extrai a lista de "ibms"
