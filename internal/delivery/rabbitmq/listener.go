@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	infrastructure "github.com/thiagohmm/integracaoThothConsumer/internal/infraestructure/rabbitmq"
+	infraestructure "github.com/thiagohmm/integracaoThothConsumer/internal/infraestructure/rabbitmq"
 	"github.com/thiagohmm/integracaoThothConsumer/internal/usecases"
 )
 
@@ -15,8 +15,8 @@ type Listener struct {
 	// Adicione mais usecases conforme necessário
 }
 
-func (l *Listener) ListenToQueue() error {
-	conn, err := infrastructure.GetRabbitMQConnection()
+func (l *Listener) ListenToQueue(rabbitmqurl string) error {
+	conn, err := infraestructure.GetRabbitMQConnection(rabbitmqurl)
 	if err != nil {
 		return fmt.Errorf("error connecting to RabbitMQ: %w", err)
 	}

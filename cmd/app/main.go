@@ -2,7 +2,6 @@ package main
 
 import (
 	"log"
-	"os"
 
 	"github.com/thiagohmm/integracaoThothConsumer/configuration"
 	"github.com/thiagohmm/integracaoThothConsumer/internal/delivery/rabbitmq"
@@ -44,7 +43,7 @@ func main() {
 	}
 
 	// Configura a conexão com RabbitMQ
-	rabbitmqURL := os.Getenv("ENV_RABBITMQ")
+	rabbitmqURL := cfg.ENV_RABBITMQ
 	if rabbitmqURL == "" {
 		log.Fatalf("RabbitMQ URL is not defined.")
 	}
@@ -57,7 +56,7 @@ func main() {
 		// Adicione mais usecases conforme necessário
 	}
 
-	if err := rabbitmqListener.ListenToQueue(); err != nil {
+	if err := rabbitmqListener.ListenToQueue(rabbitmqURL); err != nil {
 		log.Fatalf("Error listening to RabbitMQ queue: %v", err)
 	}
 

@@ -2,13 +2,12 @@ package rabbitmq
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/streadway/amqp"
 )
 
-func GetRabbitMQConnection() (*amqp.Connection, error) {
-	rabbitmqUrl := os.Getenv("RABBITMQ_URL")
+func GetRabbitMQConnection(rabbitmqURL string) (*amqp.Connection, error) {
+	rabbitmqUrl := rabbitmqURL
 	if rabbitmqUrl == "" {
 		return nil, fmt.Errorf("RABBITMQ_URL is not defined")
 	}
