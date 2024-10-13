@@ -2,7 +2,6 @@ package usecases
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"strconv"
@@ -10,11 +9,11 @@ import (
 	"time"
 
 	"github.com/thiagohmm/integracaoThothConsumer/internal/domain/entities"
-	// Ajustado para importar a interface correta
+	"github.com/valyala/fastjson"
 )
 
 type CompraUseCase struct {
-	Repo entities.CompraRepository // Troquei CompraRepositoryDB por CompraRepository (interface)
+	Repo entities.CompraRepository
 }
 
 func NewCompraUseCase(repo entities.CompraRepository) *CompraUseCase {
@@ -27,48 +26,42 @@ func parseDate(data string) int {
 	return dateInt
 }
 
-func parseFloat(value interface{}) float64 {
+func parseFloat(value *fastjson.Value) float64 {
 	if value == nil {
 		return 0.0
 	}
-	floatValue, _ := strconv.ParseFloat(fmt.Sprintf("%v", value), 64)
+	floatValue, err := strconv.ParseFloat(string(value.GetStringBytes()), 64)
+	if err != nil {
+		return 0.0
+	}
 	return floatValue
 }
 
 func (uc *CompraUseCase) ProcessarCompra(ctx context.Context, compraData map[string]interface{}) error {
-	// Mapeia os dados de compra
-
-	var persisteCompra map[string]interface{}
-	var arquivoCompra []entities.Compra
-	var novoIbm entities.Compra
-	var novoIbmCompra map[string]interface{}
-
+	var p fastjson.Parser
 	// Verifica se "compra" é uma string JSON ou um objeto
-	if compra, ok := compraData["compra"].(string); ok {
-		err := json.Unmarshal([]byte(compra), &persisteCompra)
-		if err != nil {
-			log.Printf("Erro ao fazer parse da string JSON: %v", err)
-			return err
-		}
-	} else if compra, ok := compraData["compra"].(map[string]interface{}); ok {
-		persisteCompra = compra
-	} else {
-		log.Printf("A variável 'compra' não é uma string JSON válida nem um objeto.")
+	compraValue, ok := compraData["compra"].(string)
+	if !ok {
+		log.Printf("A variável 'compra' não é uma string JSON válida.")
 		return fmt.Errorf("formato de compra inválido")
+	}
+
+	// Parseia a string JSON usando fastjson
+	v, err := p.Parse(compraValue)
+	if err != nil {
+		log.Printf("Erro ao fazer parse da string JSON: %v", err)
+		return err
 	}
 
 	deleteCounter := 0
 	// Itera sobre as IBMs da compra
-	ibms, ok := persisteCompra["compras"].(map[string]interface{})["ibms"].([]interface{})
-	if !ok {
+	ibms := v.GetArray("compras", "ibms")
+	if ibms == nil {
 		return fmt.Errorf("IBMs não encontrados no objeto de compra")
 	}
 
-	for _, compraIbmsInterface := range ibms {
-		compraIbms := compraIbmsInterface.(map[string]interface{})
-
-		// Converte "nro" para string e aplica formatação
-		nroStr := strings.TrimSpace(fmt.Sprintf("%v", compraIbms["nro"]))
+	for _, compraIbms := range ibms {
+		nroStr := strings.TrimSpace(string(compraIbms.GetStringBytes("nro")))
 		nroStr = strings.TrimLeft(nroStr, "0")
 		if len(nroStr) > 10 {
 			nroStr = nroStr[len(nroStr)-10:]
@@ -77,54 +70,25 @@ func (uc *CompraUseCase) ProcessarCompra(ctx context.Context, compraData map[str
 		}
 
 		// Obtém a data de entrada
-		dtaentrada := persisteCompra["compras"].(map[string]interface{})["dtaentrada"]
-		dtStr := strings.TrimSpace(fmt.Sprintf("%v", dtaentrada))
-		dtStr = strings.ReplaceAll(dtStr, "-", "")
+		dtaentrada := string(v.GetStringBytes("compras", "dtaentrada"))
+		dtStr := strings.ReplaceAll(dtaentrada, "-", "")
 
 		// Deleta o IBM com base no número e data
 		log.Printf("Deletando IBM compra: %s, data: %s", nroStr, dtStr)
 		if err := uc.Repo.DeleteByIBMAndEntrada(ctx, nroStr, dtStr); err != nil {
-			log.Printf("Erro ao deletar IBM compra: %v, erro: %v", compraIbms["nro"], err)
+			log.Printf("Erro ao deletar IBM compra: %v, erro: %v", compraIbms.GetStringBytes("nro"), err)
 			continue
 		}
 
 		deleteCounter++
 		if deleteCounter%100 == 0 {
-			time.Sleep(500 * time.Millisecond) // Pausa para evitar sobrecarga
+			time.Sleep(500 * time.Millisecond)
 		}
-	}
-
-	// Verifica o tipo de compraData e faz o parse se for uma string
-	compra, ok := compraData["compra"]
-	if !ok {
-		return fmt.Errorf("chave 'compra' não encontrada")
-	}
-
-	switch v := compra.(type) {
-	case string:
-		err := json.Unmarshal([]byte(v), &novoIbmCompra)
-		if err != nil {
-			log.Printf("Erro ao fazer parse da string JSON: %v", err)
-			return err
-		}
-	case map[string]interface{}:
-		novoIbmCompra = v
-	default:
-		return fmt.Errorf("A variável 'compra' não é uma string JSON válida nem um objeto")
 	}
 
 	saveCounter := 0
-
-	// Itera sobre as IBMs da compra
-	ibms, ok = novoIbmCompra["compras"].(map[string]interface{})["ibms"].([]interface{})
-	if !ok {
-		return fmt.Errorf("IBMs não encontrados no objeto de compra")
-	}
-
-	for _, ibmInterface := range ibms {
-		ibm := ibmInterface.(map[string]interface{})
-
-		// Tratamento de erro com defer para rollback em caso de falha
+	// Itera sobre as IBMs para salvar
+	for _, ibm := range ibms {
 		err := func() error {
 			defer func() {
 				if r := recover(); r != nil {
@@ -132,8 +96,7 @@ func (uc *CompraUseCase) ProcessarCompra(ctx context.Context, compraData map[str
 				}
 			}()
 
-			// Converter nro para string
-			nroStr := fmt.Sprintf("%v", ibm["nro"])
+			nroStr := string(ibm.GetStringBytes("nro"))
 			nroStr = strings.TrimLeft(strings.TrimSpace(nroStr), "0")
 			if len(nroStr) > 10 {
 				nroStr = nroStr[len(nroStr)-10:]
@@ -141,22 +104,17 @@ func (uc *CompraUseCase) ProcessarCompra(ctx context.Context, compraData map[str
 				nroStr = fmt.Sprintf("%010s", nroStr)
 			}
 
-			// Preenchendo campos da nova IBM
-			novoIbm.CD_IBM_LOJA = nroStr
-			novoIbm.RAZAO_SOCIAL_LOJA = fmt.Sprintf("%v", ibm["razao"])
-			dtaentradaStr, ok := novoIbmCompra["compras"].(map[string]interface{})["dtaentrada"].(string)
-			if !ok {
-				return fmt.Errorf("dtaentrada is not a string")
+			novoIbm := entities.Compra{
+				CD_IBM_LOJA:       nroStr,
+				RAZAO_SOCIAL_LOJA: string(ibm.GetStringBytes("razao")),
+				DT_ENTRADA:        int64(parseDate(string(v.GetStringBytes("compras", "dtaentrada")))),
+				NM_SISTEMA:        string(ibm.GetStringBytes("app")),
+				SRC_LOAD:          "API/Integração/Thoth",
+				DT_LOAD:           time.Now().Format(time.RFC3339),
 			}
-			novoIbm.DT_ENTRADA = int64(parseDate(dtaentradaStr))
-			novoIbm.NM_SISTEMA = fmt.Sprintf("%v", ibm["app"])
-			novoIbm.SRC_LOAD = "API/Integração/Thoth"
-			novoIbm.DT_LOAD = time.Now().Format(time.RFC3339)
 
-			// Processando notas
-			notas, ok := ibm["notas"].([]interface{})
-			if !ok || len(notas) == 0 {
-				arquivoCompra = append(arquivoCompra, novoIbm)
+			notas := ibm.GetArray("notas")
+			if len(notas) == 0 {
 				if err := uc.Repo.Save(ctx, novoIbm); err != nil {
 					return err
 				}
@@ -167,67 +125,44 @@ func (uc *CompraUseCase) ProcessarCompra(ctx context.Context, compraData map[str
 				return nil
 			}
 
-			for _, notaInterface := range notas {
-				nota := notaInterface.(map[string]interface{})
-
-				// Preenchendo dados da nota
-				novoIbm.NR_NOTA_FISCAL = fmt.Sprintf("%v", nota["nro"])
-				novoIbm.NR_SERIE_NOTA = fmt.Sprintf("%v", nota["serie"])
-				emissaoStr, ok := nota["emissao"].(string)
-				if !ok {
-					return fmt.Errorf("emissao is not a string")
-				}
-				novoIbm.DT_EMISSAO_NOTA = int64(parseDate(emissaoStr))
-				novoIbm.CNPJ_FORNECEDOR = fmt.Sprintf("%v", nota["fornecedor"].(map[string]interface{})["cnpj"])
-				novoIbm.NM_FORNECEDOR = fmt.Sprintf("%v", nota["fornecedor"].(map[string]interface{})["nome"])
-				novoIbm.QT_PESO = parseFloat(nota["total"].(map[string]interface{})["peso"])
-				novoIbm.VL_TOTAL_IPI = parseFloat(nota["total"].(map[string]interface{})["vlripi"])
-				novoIbm.VL_TOTAL_ICMS = parseFloat(nota["total"].(map[string]interface{})["vlricms"])
-				novoIbm.VL_TOTAL_COMPRA = parseFloat(nota["total"].(map[string]interface{})["vlrnota"])
-				novoIbm.CNPJ_TRANSPORTADORA = fmt.Sprintf("%v", nota["transportador"].(map[string]interface{})["cnpj"])
-				novoIbm.NM_TRANSPORTADORA = fmt.Sprintf("%v", nota["transportador"].(map[string]interface{})["nome"])
-				novoIbm.CD_CHAVE_NOTA_FISCAL = fmt.Sprintf("%v", nota["chavexml"])
+			for _, nota := range notas {
+				novoIbm.NR_NOTA_FISCAL = string(nota.GetStringBytes("nro"))
+				novoIbm.NR_SERIE_NOTA = string(nota.GetStringBytes("serie"))
+				novoIbm.DT_EMISSAO_NOTA = int64(parseDate(string(nota.GetStringBytes("emissao"))))
+				novoIbm.CNPJ_FORNECEDOR = string(nota.GetStringBytes("fornecedor", "cnpj"))
+				novoIbm.NM_FORNECEDOR = string(nota.GetStringBytes("fornecedor", "nome"))
+				novoIbm.QT_PESO = parseFloat(nota.Get("total", "peso"))
+				novoIbm.VL_TOTAL_IPI = parseFloat(nota.Get("total", "vlripi"))
+				novoIbm.VL_TOTAL_ICMS = parseFloat(nota.Get("total", "vlricms"))
+				novoIbm.VL_TOTAL_COMPRA = parseFloat(nota.Get("total", "vlrnota"))
+				novoIbm.CNPJ_TRANSPORTADORA = string(nota.GetStringBytes("transportador", "cnpj"))
+				novoIbm.NM_TRANSPORTADORA = string(nota.GetStringBytes("transportador", "nome"))
+				novoIbm.CD_CHAVE_NOTA_FISCAL = string(nota.GetStringBytes("chavexml"))
 
 				// Processando produtos
-				produtos, ok := nota["produtos"].([]interface{})
-				if !ok || len(produtos) == 0 {
-					arquivoCompra = append(arquivoCompra, novoIbm)
-					if err := uc.Repo.Save(ctx, novoIbm); err != nil {
-						return err
-					}
-					saveCounter++
-					if saveCounter%100 == 0 {
-						time.Sleep(500 * time.Millisecond)
-					}
-					continue
-				}
+				produtos := nota.GetArray("produtos")
+				for _, produto := range produtos {
+					novoIbm.CD_EAN_PRODUTO = string(produto.GetStringBytes("ean"))
+					novoIbm.QT_PRODUTO = parseFloat(produto.Get("qtd"))
+					novoIbm.VL_PRECO_COMPRA = parseFloat(produto.Get("preco"))
+					novoIbm.DS_PRODUTO = string(produto.GetStringBytes("descricao"))
+					novoIbm.CD_TP_PRODUTO = string(produto.GetStringBytes("tipo"))
+					novoIbm.VL_ALIQUOTA_IPI = parseFloat(produto.Get("impostos", "ipi", "aliquota"))
+					novoIbm.VL_IPI = parseFloat(produto.Get("impostos", "ipi", "vlr"))
+					novoIbm.VL_ALIQUOTA_ICMS = parseFloat(produto.Get("impostos", "icms", "aliquota"))
+					novoIbm.VL_ICMS = parseFloat(produto.Get("impostos", "icms", "vlr"))
+					novoIbm.VL_ALIQUOTA_PIS = parseFloat(produto.Get("impostos", "pis", "aliquota"))
+					novoIbm.VL_PIS = parseFloat(produto.Get("impostos", "pis", "vlr"))
+					novoIbm.VL_ALIQUOTA_COFINS = parseFloat(produto.Get("impostos", "cofins", "aliquota"))
+					novoIbm.VL_COFINS = parseFloat(produto.Get("impostos", "cofins", "vlr"))
+					novoIbm.CD_NCM = string(produto.GetStringBytes("ncm"))
+					novoIbm.CD_ITEM_NOTA_FISCAL = string(produto.GetStringBytes("linha"))
+					novoIbm.CD_PRODUTO_FORNECEDOR = string(produto.GetStringBytes("codfornec"))
+					novoIbm.QT_PRODUTO_CONVERTIDA = parseFloat(produto.Get("qtdenf"))
+					novoIbm.DS_UN_MEDIDA_CONVERTIDA = string(produto.GetStringBytes("unconv"))
+					novoIbm.DS_UN_MEDIDA = string(produto.GetStringBytes("un"))
+					novoIbm.VL_ULTIMO_CUSTO = parseFloat(produto.Get("ultcusto"))
 
-				for _, produtoInterface := range produtos {
-					produto := produtoInterface.(map[string]interface{})
-
-					// Preenchendo dados do produto
-					novoIbm.CD_EAN_PRODUTO = fmt.Sprintf("%v", produto["ean"])
-					novoIbm.QT_PRODUTO = parseFloat(produto["qtd"])
-					novoIbm.VL_PRECO_COMPRA = parseFloat(produto["preco"])
-					novoIbm.DS_PRODUTO = fmt.Sprintf("%v", produto["descricao"])
-					novoIbm.CD_TP_PRODUTO = fmt.Sprintf("%v", produto["tipo"])
-					novoIbm.VL_ALIQUOTA_IPI = parseFloat(produto["impostos"].(map[string]interface{})["ipi"].(map[string]interface{})["aliquota"])
-					novoIbm.VL_IPI = parseFloat(produto["impostos"].(map[string]interface{})["ipi"].(map[string]interface{})["vlr"])
-					novoIbm.VL_ALIQUOTA_ICMS = parseFloat(produto["impostos"].(map[string]interface{})["icms"].(map[string]interface{})["aliquota"])
-					novoIbm.VL_ICMS = parseFloat(produto["impostos"].(map[string]interface{})["icms"].(map[string]interface{})["vlr"])
-					novoIbm.VL_ALIQUOTA_PIS = parseFloat(produto["impostos"].(map[string]interface{})["pis"].(map[string]interface{})["aliquota"])
-					novoIbm.VL_PIS = parseFloat(produto["impostos"].(map[string]interface{})["pis"].(map[string]interface{})["vlr"])
-					novoIbm.VL_ALIQUOTA_COFINS = parseFloat(produto["impostos"].(map[string]interface{})["cofins"].(map[string]interface{})["aliquota"])
-					novoIbm.VL_COFINS = parseFloat(produto["impostos"].(map[string]interface{})["cofins"].(map[string]interface{})["vlr"])
-					novoIbm.CD_NCM = fmt.Sprintf("%v", produto["ncm"])
-					novoIbm.CD_ITEM_NOTA_FISCAL = fmt.Sprintf("%v", produto["linha"])
-					novoIbm.CD_PRODUTO_FORNECEDOR = fmt.Sprintf("%v", produto["codfornec"])
-					novoIbm.QT_PRODUTO_CONVERTIDA = parseFloat(produto["qtdenf"])
-					novoIbm.DS_UN_MEDIDA_CONVERTIDA = fmt.Sprintf("%v", produto["unconv"])
-					novoIbm.DS_UN_MEDIDA = fmt.Sprintf("%v", produto["un"])
-					novoIbm.VL_ULTIMO_CUSTO = parseFloat(produto["ultcusto"])
-
-					arquivoCompra = append(arquivoCompra, novoIbm)
 					if err := uc.Repo.Save(ctx, novoIbm); err != nil {
 						return err
 					}
@@ -237,16 +172,13 @@ func (uc *CompraUseCase) ProcessarCompra(ctx context.Context, compraData map[str
 					}
 				}
 			}
-
 			return nil
 		}()
 		if err != nil {
-			log.Printf("Erro ao processar IBM Compra: %v", err)
-
+			log.Printf("Erro ao salvar IBM compra: %v", err)
+			return err
 		}
-
 	}
 
 	return nil
-
 }

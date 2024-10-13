@@ -5,6 +5,7 @@ go 1.23.2
 require (
 	github.com/spf13/viper v1.19.0
 	github.com/streadway/amqp v1.1.0
+	github.com/valyala/fastjson v1.6.4
 )
 
 require (
