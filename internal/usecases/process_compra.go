@@ -143,7 +143,13 @@ func (uc *CompraUseCase) ProcessarCompra(ctx context.Context, compraData map[str
 				produtos := nota.GetArray("produtos")
 				for _, produto := range produtos {
 					novoIbm.CD_EAN_PRODUTO = string(produto.GetStringBytes("ean"))
-					novoIbm.QT_PRODUTO = parseFloat(produto.Get("qtd"))
+					qtdStr := string(produto.GetStringBytes("qtd"))
+					qtdInt, err := strconv.ParseInt(qtdStr, 10, 64)
+					if err != nil {
+						log.Printf("Erro ao converter quantidade: %v", err)
+						return err
+					}
+					novoIbm.QT_PRODUTO = float64(qtdInt)
 					novoIbm.VL_PRECO_COMPRA = parseFloat(produto.Get("preco"))
 					novoIbm.DS_PRODUTO = string(produto.GetStringBytes("descricao"))
 					novoIbm.CD_TP_PRODUTO = string(produto.GetStringBytes("tipo"))
