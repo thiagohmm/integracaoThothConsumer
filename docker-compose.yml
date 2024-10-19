@@ -13,6 +13,8 @@ services:
     ports:
       - 6379:6379
     restart: unless-stopped
+    networks:
+      - integracao
 
   rabbitmq:
     image: rabbitmq:3-management-alpine
@@ -23,6 +25,8 @@ services:
     volumes:
         - ~/.docker-conf/rabbitmq/data/:/var/lib/rabbitmq/
         - ~/.docker-conf/rabbitmq/log/:/var/log/rabbitmq
+    networks:
+        - integracao
 
 volumes:
   data:
