@@ -28,6 +28,10 @@ services:
     networks:
         - integracao
 
+networks:
+  integracao::
+    driver: bridge
+
 volumes:
   data:
     driver: local
