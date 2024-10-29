@@ -191,20 +191,10 @@ func (uc *CompraUseCase) ProcessarCompra(ctx context.Context, compraData map[str
 					novoIbm.VL_PIS = parseFloat(produto.Get("impostos", "pis", "vlr"))
 					novoIbm.VL_ALIQUOTA_COFINS = parseFloat(produto.Get("impostos", "cofins", "aliquota"))
 					novoIbm.VL_COFINS = parseFloat(produto.Get("impostos", "cofins", "vlr"))
-					novoIbm.CD_NCM = stringOrDefault(produto.GetStringBytes("ncm"))
-					novoIbm.CD_ITEM_NOTA_FISCAL = stringOrDefault(produto.GetStringBytes("linha"))
-					novoIbm.CD_PRODUTO_FORNECEDOR = stringOrDefault(produto.GetStringBytes("codfornec"))
-					novoIbm.QT_PRODUTO_CONVERTIDA = parseFloat(produto.Get("qtdenf"))
-					novoIbm.DS_UN_MEDIDA_CONVERTIDA = stringOrDefault(produto.GetStringBytes("unconv"))
-					novoIbm.DS_UN_MEDIDA = stringOrDefault(produto.GetStringBytes("un"))
-					novoIbm.VL_ULTIMO_CUSTO = parseFloat(produto.Get("ultimocusto"))
 
-					// Salva o produto com os dados atualizados
-
-					fmt.Println("Salvando", novoIbm)
+					// Salvar IBM atualizado
 					if err := uc.Repo.Save(ctx, novoIbm); err != nil {
-						log.Printf("Erro ao salvar a compra: %v", err)
-						return err
+						log.Printf("Erro ao salvar novo IBM: %v", err)
 					}
 					saveCounter++
 					if saveCounter%100 == 0 {
@@ -214,13 +204,9 @@ func (uc *CompraUseCase) ProcessarCompra(ctx context.Context, compraData map[str
 			}
 			return nil
 		}()
-
 		if err != nil {
-			log.Printf("Error processing message: %v", err)
+			log.Printf("Erro ao processar IBM: %v", err)
 		}
 	}
-
-	log.Printf("Total de IBMs deletados: %d", deleteCounter)
-	log.Printf("Total de IBMs salvos: %d", saveCounter)
 	return nil
 }

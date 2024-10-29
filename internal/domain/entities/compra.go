@@ -43,6 +43,8 @@ type Compra struct {
 	SRC_LOAD                string  `json:"src_load,omitempty"`
 	DT_LOAD                 string  `json:"dt_load,omitempty"`
 	FL_CARGA_HISTORICA      int     `json:"fl_carga_historica,omitempty"`
+	CD_IBM_LOJA_EAGLE       string  `json:"cd_ibm_loja_eagle,omitempty"`
+	CD_EAN_PRODUTO_EAGLE    string  `json:"cd_ean_produto_eagle,omitempty"`
 }
 
 type IBM struct {
