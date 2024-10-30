@@ -150,7 +150,7 @@ func (uc *CompraUseCase) ProcessarCompra(ctx context.Context, compraData map[str
 			notas := ibm.GetArray("notas")
 			if len(notas) == 0 {
 				fmt.Println("Salvando", novoIbm)
-				if err := uc.Repo.Save(ctx, novoIbm); err != nil {
+				if err := uc.Repo.SaveCompra(ctx, novoIbm); err != nil {
 					return err
 				}
 			}
@@ -193,7 +193,7 @@ func (uc *CompraUseCase) ProcessarCompra(ctx context.Context, compraData map[str
 					novoIbm.VL_COFINS = parseFloat(produto.Get("impostos", "cofins", "vlr"))
 
 					// Salvar IBM atualizado
-					if err := uc.Repo.Save(ctx, novoIbm); err != nil {
+					if err := uc.Repo.SaveCompra(ctx, novoIbm); err != nil {
 						log.Printf("Erro ao salvar novo IBM: %v", err)
 					}
 					saveCounter++

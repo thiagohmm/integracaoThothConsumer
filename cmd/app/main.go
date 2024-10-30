@@ -25,6 +25,11 @@ func main() {
 	}
 	defer db.Close()
 
+	// Verifica a conexão com o banco de dados
+	if err := db.Ping(); err != nil {
+		log.Fatalf("Erro ao verificar a conexão: %v", err)
+	}
+
 	// Inicializa o repositório de compra
 	compraRepo := &repositories.CompraRepositoryDB{
 		DB: db,

@@ -15,7 +15,7 @@ type CompraRepositoryDB struct {
 	DB *sql.DB
 }
 
-func (r *CompraRepositoryDB) Save(ctx context.Context, compra entities.Compra) error {
+func (r *CompraRepositoryDB) SaveCompra(ctx context.Context, compra entities.Compra) error {
 	// Logar os valores antes da inserção
 	log.Printf("Valores para inserção: DT_EMISSAO_NOTA: %d, DT_ENTRADA: %d, VL_ULTIMO_CUSTO: %f, QT_PRODUTO: %f, QT_PRODUTO_CONVERTIDA: %f, VL_PRECO_COMPRA: %f, VL_PIS: %f, VL_ALIQUOTA_PIS: %f, VL_COFINS: %f, VL_ALIQUOTA_COFINS: %f, VL_ICMS: %f, VL_ALIQUOTA_ICMS: %f, VL_IPI: %f, VL_ALIQUOTA_IPI: %f, QT_PESO: %f, VL_TOTAL_ICMS: %f, VL_TOTAL_IPI: %f, VL_TOTAL_COMPRA: %f",
 		compra.DT_EMISSAO_NOTA, compra.DT_ENTRADA, compra.VL_ULTIMO_CUSTO, compra.QT_PRODUTO, compra.QT_PRODUTO_CONVERTIDA, compra.VL_PRECO_COMPRA, compra.VL_PIS, compra.VL_ALIQUOTA_PIS, compra.VL_COFINS, compra.VL_ALIQUOTA_COFINS, compra.VL_ICMS, compra.VL_ALIQUOTA_ICMS, compra.VL_IPI, compra.VL_ALIQUOTA_IPI, compra.QT_PESO, compra.VL_TOTAL_ICMS, compra.VL_TOTAL_IPI, compra.VL_TOTAL_COMPRA)
