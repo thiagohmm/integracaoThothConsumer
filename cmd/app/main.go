@@ -5,7 +5,7 @@ import (
 
 	"github.com/thiagohmm/integracaoThothConsumer/configuration"
 	"github.com/thiagohmm/integracaoThothConsumer/internal/delivery/rabbitmq"
-	"github.com/thiagohmm/integracaoThothConsumer/internal/domain/entities/repositories"
+	"github.com/thiagohmm/integracaoThothConsumer/internal/domain/repositories"
 	"github.com/thiagohmm/integracaoThothConsumer/internal/infraestructure/database"
 	"github.com/thiagohmm/integracaoThothConsumer/internal/usecases"
 )
@@ -46,6 +46,7 @@ func main() {
 
 	// Inicializa o listener da fila RabbitMQ com o caso de uso de compra
 	rabbitmqListener := rabbitmq.Listener{
+
 		CompraUC: compraUseCase,
 	}
 
