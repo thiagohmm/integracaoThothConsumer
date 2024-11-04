@@ -35,8 +35,13 @@ func main() {
 		DB: db,
 	}
 
+	estoqueRepo := &repositories.EstoqueRepositoryDB{
+		DB: db,
+	}
+
 	// Inicializa o caso de uso de compra
 	compraUseCase := usecases.NewCompraUseCase(compraRepo)
+	estoqueUseCase := usecases.NewEstoqueUseCase(estoqueRepo)
 
 	// Verifica a configuração da URL do RabbitMQ
 	rabbitmqURL := cfg.ENV_RABBITMQ
@@ -47,7 +52,10 @@ func main() {
 	// Inicializa o listener da fila RabbitMQ com o caso de uso de compra
 	rabbitmqListener := rabbitmq.Listener{
 
-		CompraUC: compraUseCase,
+		CompraUC:  compraUseCase,
+		EstoqueUC: estoqueUseCase,
+		//VendaUC: vendaUseCase,
+		// Adicione mais usecases conforme necessário,
 	}
 
 	// Escuta a fila RabbitMQ

@@ -8,6 +8,6 @@ type CompraRepository interface {
 }
 
 type EstoqueRepository interface {
-	SaveEstoque(ctx context.Context, estoque Estoque) error
+	SalvarEstoque(ctx context.Context, estoque Estoque) error
 	DeleteByIBMEstoque(ctx context.Context, ibm string, dtEstoque string) error
 }
