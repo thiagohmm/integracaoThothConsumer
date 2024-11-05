@@ -39,10 +39,14 @@ func main() {
 		DB: db,
 	}
 
+	vendaRepo := &repositories.VendaRepositoryDB{
+		DB: db,
+	}
+
 	// Inicializa o caso de uso de compra
 	compraUseCase := usecases.NewCompraUseCase(compraRepo)
 	estoqueUseCase := usecases.NewEstoqueUseCase(estoqueRepo)
-
+	vendaUseCase := usecases.NewVendaUseCase(vendaRepo)
 	// Verifica a configuração da URL do RabbitMQ
 	rabbitmqURL := cfg.ENV_RABBITMQ
 	if rabbitmqURL == "" {
@@ -54,7 +58,7 @@ func main() {
 
 		CompraUC:  compraUseCase,
 		EstoqueUC: estoqueUseCase,
-		//VendaUC: vendaUseCase,
+		VendaUC:   vendaUseCase,
 		// Adicione mais usecases conforme necessário,
 	}
 

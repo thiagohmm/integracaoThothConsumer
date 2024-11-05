@@ -11,3 +11,8 @@ type EstoqueRepository interface {
 	SalvarEstoque(ctx context.Context, estoque Estoque) error
 	DeleteByIBMEstoque(ctx context.Context, ibm string, dtEstoque string) error
 }
+
+type VendaRepository interface {
+	SalvarVenda(ctx context.Context, venda Venda) error
+	DeleteByIBMVenda(ctx context.Context, ibm string, dtVenda string) error
+}

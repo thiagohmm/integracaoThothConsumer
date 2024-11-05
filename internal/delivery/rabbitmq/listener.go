@@ -13,7 +13,7 @@ import (
 type Listener struct {
 	CompraUC  *usecases.CompraUseCase
 	EstoqueUC *usecases.EstoqueUseCase
-	//VendaUC *usecases.VendaUseCase
+	VendaUC   *usecases.VendaUseCase
 	// Adicione mais usecases conforme necessário
 }
 
@@ -48,6 +48,7 @@ func (l *Listener) ListenToQueue(rabbitmqurl string) error {
 			err = l.CompraUC.ProcessarCompra(context.Background(), message["dados"].(map[string]interface{}))
 		} else if processa == "venda" {
 			// Chame o caso de uso para venda
+			err = l.VendaUC.ProcessarVenda(context.Background(), message["dados"].(map[string]interface{}))
 		} else if processa == "estoque" {
 			// Chame o caso de uso para estoque
 			err = l.EstoqueUC.ProcessarEstoque(context.Background(), message["dados"].(map[string]interface{}))
