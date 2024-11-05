@@ -48,10 +48,16 @@ func (uc *VendaUseCase) ProcessarVenda(ctx context.Context, vendaData map[string
 
 		// Obtém a data de entrada
 		dtaentrada := string(v.GetStringBytes("vendas", "dtavenda"))
+
 		dtStr := strings.ReplaceAll(dtaentrada, "-", "")
+		dtEntrada, err := strconv.ParseInt(dtStr, 10, 64)
+		if err != nil {
+			log.Printf("Erro ao converter DT_ENTRADA para int64: %v", err)
+			return err
+		}
 
 		// Deleta o IBM com base no número e data
-		log.Printf("Deletando IBM Venda: %s, data: %s", nroStr, dtStr)
+		log.Printf("Deletando IBM Venda: %s, data: %s", nroStr, dtEntrada)
 		if err := uc.Repo.DeleteByIBMVenda(ctx, nroStr, dtStr); err != nil {
 			log.Printf("Erro ao deletar IBM venda: %s, erro: %v", nroStr, err)
 			continue
@@ -87,7 +93,7 @@ func (uc *VendaUseCase) ProcessarVenda(ctx context.Context, vendaData map[string
 				CD_IBM_LOJA:       nroStr,
 				RAZAO_SOCIAL_LOJA: stringOrDefault(ibm.GetStringBytes("razao")),
 				NM_SISTEMA:        stringOrDefault(ibm.GetStringBytes("app")),
-				DT_ARQUIVO:        stringOrDefault(ibm.GetStringBytes("dtaenvio")),
+				DT_ARQUIVO:        stringOrDefault(v.GetStringBytes("vendas", "dtaenvio")),
 				SRC_LOAD:          "API/Integração/Thoth",
 				DT_LOAD:           string(time.Now().UTC().Format("2006-01-02T15:04:05.000Z")), // Formatar DT_LOAD corretamente
 			}
@@ -103,37 +109,35 @@ func (uc *VendaUseCase) ProcessarVenda(ctx context.Context, vendaData map[string
 			}
 
 			for _, venda := range vendas {
-				novoIbm.HR_INICIO_TRANSACAO = stringOrDefault(venda.GetStringBytes("inicio"))
+				novoIbm.HR_INICIO_TRANSACAO = stringOrDefault(venda.GetStringBytes("ini"))
 				novoIbm.HR_FIM_TRANSACAO = stringOrDefault(venda.GetStringBytes("fim"))
-				novoIbm.CD_TRANSACAO = stringOrDefault(venda.GetStringBytes("transacao"))
-				novoIbm.CPF_CNPJ_CLIENTE = stringOrDefault(venda.GetStringBytes("cliente", "cnpj"))
-				novoIbm.NM_FORMA_PAGAMENTO = stringOrDefault(venda.GetStringBytes("forma"))
+				novoIbm.CD_TRANSACAO = stringOrDefault(venda.GetStringBytes("doc"))
+				novoIbm.CPF_CNPJ_CLIENTE = stringOrDefault(venda.GetStringBytes("cpfcnpj"))
+				novoIbm.NM_FORMA_PAGAMENTO = stringOrDefault(venda.GetStringBytes("formapagto"))
+				novoIbm.NM_BANDEIRA = stringOrDefault(venda.GetStringBytes("bandeira"))
 				novoIbm.CD_CCF = stringOrDefault(venda.GetStringBytes("ccf"))
-				novoIbm.CD_MODELO_DOCTO = stringOrDefault(venda.GetStringBytes("modelo"))
+				novoIbm.CD_MODELO_DOCTO = stringOrDefault(venda.GetStringBytes("moddoc"))
 
 				// Processando produtos
 				produtos := venda.GetArray("produtos")
 				for _, produto := range produtos {
 					novoIbm.CD_EAN_PRODUTO = stringOrDefault(produto.GetStringBytes("ean"))
-					qtdStr := stringOrDefault(produto.GetStringBytes("qtd"))
-					qtdFloat, err := strconv.ParseFloat(qtdStr, 64)
-					if err != nil {
-						log.Printf("Erro ao converter quantidade: %v", err)
-						return err
-					}
-					novoIbm.QT_PRODUTO = strconv.FormatFloat(qtdFloat, 'f', -1, 64)
-					novoIbm.VL_PRECO_UNITARIO = strconv.FormatFloat(parseFloat(produto.Get("preco")), 'f', -1, 64)
-					novoIbm.VL_IMPOSTO = strconv.FormatFloat(parseFloat(produto.Get("imposto")), 'f', -1, 64)
-					novoIbm.VL_FATURADO = strconv.FormatFloat(parseFloat(produto.Get("total")), 'f', -1, 64)
-					novoIbm.VL_CUSTO_UNITARIO = strconv.FormatFloat(parseFloat(produto.Get("custo")), 'f', -1, 64)
+					novoIbm.QT_PRODUTO = stringOrDefault(produto.GetStringBytes("qtd"))
+					novoIbm.VL_PRECO_UNITARIO = stringOrDefault(produto.GetStringBytes("preco"))
+					novoIbm.VL_IMPOSTO = stringOrDefault(produto.GetStringBytes("imposto"))
+					novoIbm.VL_FATURADO = stringOrDefault(produto.GetStringBytes("total"))
+					novoIbm.VL_CUSTO_UNITARIO = stringOrDefault(produto.GetStringBytes("custo"))
 					novoIbm.CD_DEPARTAMENTO = stringOrDefault(produto.GetStringBytes("dep"))
-					novoIbm.CD_TP_PRODUTO = stringOrDefault(produto.GetStringBytes("tipo"))
+
+					tipo := produto.GetInt("tipo")
+					itemTrans := produto.GetInt("trans")
+					novoIbm.CD_TP_PRODUTO = strconv.FormatInt(int64(tipo), 10)
 					novoIbm.DS_PRODUTO = stringOrDefault(produto.GetStringBytes("descricao"))
 					novoIbm.CD_PROMOCAO = stringOrDefault(produto.GetStringBytes("codmix"))
 					novoIbm.CD_EAN_EMBALAGEM = stringOrDefault(produto.GetStringBytes("eanpack"))
-					novoIbm.CD_TP_TRANSACAO = stringOrDefault(produto.GetStringBytes("trans"))
+					novoIbm.CD_TP_TRANSACAO = strconv.FormatInt(int64(itemTrans), 10)
 					novoIbm.VL_DESCONTO = stringOrDefault(produto.GetStringBytes("desconto"))
-					novoIbm.CD_ITEM_TRANSACAO = stringOrDefault(produto.GetStringBytes("trans"))
+					novoIbm.CD_ITEM_TRANSACAO = strconv.FormatInt(int64(itemTrans), 10)
 
 					// Salvar IBM atualizado
 					if err := uc.Repo.SalvarVenda(ctx, novoIbm); err != nil {
