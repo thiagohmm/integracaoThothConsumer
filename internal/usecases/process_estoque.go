@@ -7,6 +7,7 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/thiagohmm/integracaoThothConsumer/internal/domain/entities"
@@ -37,7 +38,11 @@ func (uc *EstoqueUseCase) ProcessarEstoque(ctx context.Context, estoqueData map[
 		return err
 	}
 
-	deleteCounter := 0
+	// Limite de goroutines ativas
+	const maxGoroutines = 50
+	semaphore := make(chan struct{}, maxGoroutines)
+	var wg sync.WaitGroup
+
 	// Itera sobre as IBMs da compra
 	ibms := v.GetArray("estoque", "ibms")
 	if ibms == nil {
@@ -45,59 +50,59 @@ func (uc *EstoqueUseCase) ProcessarEstoque(ctx context.Context, estoqueData map[
 	}
 
 	for _, estoqueIbms := range ibms {
-		nroStr := sanitizeIBM(string(estoqueIbms.GetStringBytes("nro")))
+		wg.Add(1)
+		semaphore <- struct{}{}
 
-		// Obtém a data de entrada
-		dtaentrada := string(v.GetStringBytes("estoque", "dtaestoque"))
-		dtStr := strings.ReplaceAll(dtaentrada, "-", "")
+		go func(estoqueIbms *fastjson.Value) {
+			defer wg.Done()
+			defer func() { <-semaphore }() // Libera o slot no semáforo
 
-		// Deleta o IBM com base no número e data
-		log.Printf("Deletando IBM compra: %s, data: %s", nroStr, dtStr)
-		if err := uc.Repo.DeleteByIBMEstoque(ctx, nroStr, dtStr); err != nil {
-			log.Printf("Erro ao deletar IBM compra: %s, erro: %v", nroStr, err)
-			continue
-		}
+			nroStr := sanitizeIBM(string(estoqueIbms.GetStringBytes("nro")))
+			dtaentrada := string(v.GetStringBytes("estoque", "dtaestoque"))
+			dtStr := strings.ReplaceAll(dtaentrada, "-", "")
 
-		deleteCounter++
-		if deleteCounter%100 == 0 {
-			time.Sleep(500 * time.Millisecond)
-		}
+			log.Printf("Deletando IBM compra: %s, data: %s", nroStr, dtStr)
+			if err := uc.Repo.DeleteByIBMEstoque(ctx, nroStr, dtStr); err != nil {
+				log.Printf("Erro ao deletar IBM compra: %s, erro: %v", nroStr, err)
+			}
+		}(estoqueIbms)
 	}
 
-	saveCounter := 0
-	// Itera sobre as IBMs para salvar
+	// Espera todas as goroutines de deleção terminarem
+	wg.Wait()
+
+	// Processa e salva as IBMs em goroutines
 	for _, ibm := range ibms {
-		err := func() error {
-			defer func() {
-				if r := recover(); r != nil {
-					log.Printf("Erro ao processar IBM Compra: %v", r)
-				}
-			}()
+		wg.Add(1)
+		semaphore <- struct{}{}
+
+		go func(ibm *fastjson.Value) {
+			defer wg.Done()
+			defer func() { <-semaphore }()
 
 			nroStr := sanitizeIBM(string(ibm.GetStringBytes("nro")))
-
-			// Obtém a data de emissão da nota
 			dtStr := string(v.GetStringBytes("estoque", "dtaestoque"))
 			dtEstoque, err := strconv.ParseInt(dtStr, 10, 64)
 			if err != nil {
 				log.Printf("Erro ao converter DT_Estoque para int64: %v", err)
-				return err
+				return
 			}
+
 			novoIbm := entities.Estoque{
 				CD_IBM_LOJA:       nroStr,
 				RAZAO_SOCIAL_LOJA: stringOrDefault(ibm.GetStringBytes("razao")),
 				DT_ESTOQUE:        dtEstoque,
 				NM_SISTEMA:        stringOrDefault(ibm.GetStringBytes("app")),
 				SRC_LOAD:          "API/Integração/Thoth",
-				DT_LOAD:           string(time.Now().UTC().Format("2006-01-02T15:04:05.000Z")), // Formatar DT_LOAD corretamente
+				DT_LOAD:           time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
 			}
 
 			produtos := ibm.GetArray("produtos")
 			if len(produtos) == 0 {
-				fmt.Println("Salvando", novoIbm)
 				if err := uc.Repo.SalvarEstoque(ctx, novoIbm); err != nil {
-					return err
+					log.Printf("Erro ao salvar IBM Estoque: %v", err)
 				}
+				return
 			}
 
 			for _, produto := range produtos {
@@ -112,31 +117,23 @@ func (uc *EstoqueUseCase) ProcessarEstoque(ctx context.Context, estoqueData map[
 				novoIbm.QT_FINAL_PRODUTO = parseFloat(produto.Get("qtdfim"))
 				novoIbm.VL_TOTAL_ESTOQUE = parseFloat(produto.Get("total"))
 
-				// Tratamento de VL_CUSTO_MEDIO
 				vlCustoMedio := parseFloat(produto.Get("vlrmedio"))
-				if vlCustoMedio > float64(1<<53-1) { // Número máximo seguro para inteiros em JavaScript (Number.MAX_SAFE_INTEGER)
+				if vlCustoMedio > float64(1<<53-1) {
 					vlCustoMedioStr := fmt.Sprintf("%.2f", vlCustoMedio)
 					vlCustoMedio, _ = strconv.ParseFloat(vlCustoMedioStr[:4], 64)
 				}
 				novoIbm.VL_CUSTO_MEDIO = vlCustoMedio
 
-				// Salvar IBM atualizado
-				//fmt.Println("Salvando", novoIbm)
 				if err := uc.Repo.SalvarEstoque(ctx, novoIbm); err != nil {
 					log.Printf("Erro ao salvar novo IBM Estoque: %v", err)
 				}
-				saveCounter++
-				if saveCounter%100 == 0 {
-					time.Sleep(500 * time.Millisecond)
-				}
 			}
-
-			return nil
-		}()
-		if err != nil {
-			log.Printf("Erro ao processar IBM: %v", err)
-		}
+		}(ibm)
 	}
-	return nil
 
+	// Espera todas as goroutines de salvamento terminarem
+	wg.Wait()
+
+	log.Printf("Processamento de estoque concluído")
+	return nil
 }

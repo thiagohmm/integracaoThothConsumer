@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
-	"strings"
+	"sync"
 	"time"
 
 	"github.com/thiagohmm/integracaoThothConsumer/internal/domain/entities"
@@ -36,75 +36,54 @@ func (uc *VendaUseCase) ProcessarVenda(ctx context.Context, vendaData map[string
 		return err
 	}
 
-	deleteCounter := 0
-	// Itera sobre as IBMs da compra
 	ibms := v.GetArray("vendas", "ibms")
 	if ibms == nil {
 		return fmt.Errorf("IBMs não encontrados no objeto de venda")
 	}
 
+	var wg sync.WaitGroup
+	goroutineLimit := make(chan struct{}, 50) // Limite de 10 goroutines simultâneas
+	errorChan := make(chan error, len(ibms))  // Canal para capturar erros de goroutines
+
+	// Processa cada IBM em goroutines
 	for _, vendaIbms := range ibms {
-		nroStr := sanitizeIBM(string(vendaIbms.GetStringBytes("nro")))
+		wg.Add(1)
+		go func(vendaIbms *fastjson.Value) {
+			defer wg.Done()
 
-		// Obtém a data de entrada
-		dtaentrada := string(v.GetStringBytes("vendas", "dtavenda"))
+			goroutineLimit <- struct{}{} // Bloqueia se o limite de goroutines for atingido
+			defer func() { <-goroutineLimit }()
 
-		dtStr := strings.ReplaceAll(dtaentrada, "-", "")
-		dtEntrada, err := strconv.ParseInt(dtStr, 10, 64)
-		if err != nil {
-			log.Printf("Erro ao converter DT_ENTRADA para int64: %v", err)
-			return err
-		}
-
-		// Deleta o IBM com base no número e data
-		log.Printf("Deletando IBM Venda: %s, data: %s", nroStr, dtEntrada)
-		if err := uc.Repo.DeleteByIBMVenda(ctx, nroStr, dtStr); err != nil {
-			log.Printf("Erro ao deletar IBM venda: %s, erro: %v", nroStr, err)
-			continue
-		}
-
-		deleteCounter++
-		if deleteCounter%100 == 0 {
-			time.Sleep(500 * time.Millisecond)
-		}
-	}
-
-	saveCounter := 0
-	// Itera sobre as IBMs para salvar
-	for _, ibm := range ibms {
-		err := func() error {
-			defer func() {
-				if r := recover(); r != nil {
-					log.Printf("Erro ao processar IBM Compra: %v", r)
-				}
-			}()
-
-			nroStr := sanitizeIBM(string(ibm.GetStringBytes("nro")))
-
-			// Obtém a data de emissão da nota
+			nroStr := sanitizeIBM(string(vendaIbms.GetStringBytes("nro")))
 			dtStr := string(v.GetStringBytes("vendas", "dtavenda"))
 			dtEntrada, err := strconv.ParseInt(dtStr, 10, 64)
 			if err != nil {
 				log.Printf("Erro ao converter DT_Venda para int64: %v", err)
-				return err
+				errorChan <- err
+				return
 			}
+
+			if err := uc.Repo.DeleteByIBMVenda(ctx, nroStr, dtStr); err != nil {
+				log.Printf("Erro ao deletar IBM venda: %s, erro: %v", nroStr, err)
+				errorChan <- err
+				return
+			}
+
 			novoIbm := entities.Venda{
 				DT_TRANSACAO:      dtEntrada,
 				CD_IBM_LOJA:       nroStr,
-				RAZAO_SOCIAL_LOJA: stringOrDefault(ibm.GetStringBytes("razao")),
-				NM_SISTEMA:        stringOrDefault(ibm.GetStringBytes("app")),
+				RAZAO_SOCIAL_LOJA: stringOrDefault(vendaIbms.GetStringBytes("razao")),
+				NM_SISTEMA:        stringOrDefault(vendaIbms.GetStringBytes("app")),
 				DT_ARQUIVO:        stringOrDefault(v.GetStringBytes("vendas", "dtaenvio")),
 				SRC_LOAD:          "API/Integração/Thoth",
-				DT_LOAD:           string(time.Now().UTC().Format("2006-01-02T15:04:05.000Z")), // Formatar DT_LOAD corretamente
+				DT_LOAD:           string(time.Now().UTC().Format("2006-01-02T15:04:05.000Z")),
 			}
 
-			// novoIbm.DT_ENTRADA = dtEntrada
-
-			vendas := ibm.GetArray("vendas")
+			vendas := vendaIbms.GetArray("vendas")
 			if len(vendas) == 0 {
-				fmt.Println("Salvando", novoIbm)
 				if err := uc.Repo.SalvarVenda(ctx, novoIbm); err != nil {
-					return err
+					errorChan <- err
+					return
 				}
 			}
 
@@ -118,7 +97,6 @@ func (uc *VendaUseCase) ProcessarVenda(ctx context.Context, vendaData map[string
 				novoIbm.CD_CCF = stringOrDefault(venda.GetStringBytes("ccf"))
 				novoIbm.CD_MODELO_DOCTO = stringOrDefault(venda.GetStringBytes("moddoc"))
 
-				// Processando produtos
 				produtos := venda.GetArray("produtos")
 				for _, produto := range produtos {
 					novoIbm.CD_EAN_PRODUTO = stringOrDefault(produto.GetStringBytes("ean"))
@@ -128,7 +106,6 @@ func (uc *VendaUseCase) ProcessarVenda(ctx context.Context, vendaData map[string
 					novoIbm.VL_FATURADO = stringOrDefault(produto.GetStringBytes("total"))
 					novoIbm.VL_CUSTO_UNITARIO = stringOrDefault(produto.GetStringBytes("custo"))
 					novoIbm.CD_DEPARTAMENTO = stringOrDefault(produto.GetStringBytes("dep"))
-
 					tipo := produto.GetInt("tipo")
 					itemTrans := produto.GetInt("trans")
 					novoIbm.CD_TP_PRODUTO = strconv.FormatInt(int64(tipo), 10)
@@ -139,20 +116,24 @@ func (uc *VendaUseCase) ProcessarVenda(ctx context.Context, vendaData map[string
 					novoIbm.VL_DESCONTO = stringOrDefault(produto.GetStringBytes("desconto"))
 					novoIbm.CD_ITEM_TRANSACAO = strconv.FormatInt(int64(itemTrans), 10)
 
-					// Salvar IBM atualizado
+					// Salva o IBM atualizado
 					if err := uc.Repo.SalvarVenda(ctx, novoIbm); err != nil {
 						log.Printf("Erro ao salvar novo IBM: %v", err)
-					}
-					saveCounter++
-					if saveCounter%100 == 0 {
-						time.Sleep(500 * time.Millisecond)
+						errorChan <- err
+						return
 					}
 				}
 			}
-			return nil
-		}()
+		}(vendaIbms)
+	}
+
+	wg.Wait()
+	close(errorChan)
+
+	// Verifica se houve algum erro nas goroutines
+	for err := range errorChan {
 		if err != nil {
-			log.Printf("Erro ao processar IBM: %v", err)
+			log.Printf("Erro durante o processamento: %v", err)
 		}
 	}
 	return nil
