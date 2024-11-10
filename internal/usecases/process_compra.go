@@ -76,11 +76,11 @@ func parseFloatOrDefault(value []byte) float64 {
 	return floatValue
 }
 
-func (uc *CompraUseCase) ProcessarCompra(ctx context.Context, compraData map[string]interface{}) error {
+func (uc *CompraUseCase) ProcessarCompra(ctx context.Context, compraData map[string]interface{}) (bool, error) {
 	compraJSON, err := json.Marshal(compraData)
 	if err != nil {
 		log.Printf("Erro ao converter mapa em JSON: %v", err)
-		return err
+		return false, err
 	}
 
 	// Parsear o JSON usando fastjson
@@ -88,7 +88,7 @@ func (uc *CompraUseCase) ProcessarCompra(ctx context.Context, compraData map[str
 	v, err := p.ParseBytes(compraJSON)
 	if err != nil {
 		log.Printf("Erro ao parsear JSON: %v", err)
-		return err
+		return false, err
 	}
 
 	// Limite de goroutines ativas
@@ -100,7 +100,7 @@ func (uc *CompraUseCase) ProcessarCompra(ctx context.Context, compraData map[str
 	// Itera sobre as IBMs da compra
 	ibms := v.GetArray("compras", "ibms")
 	if ibms == nil {
-		return fmt.Errorf("IBMs não encontrados no objeto de compra")
+		return false, fmt.Errorf("IBMs não encontrados no objeto de compra")
 	}
 
 	for _, compraIbms := range ibms {
@@ -236,5 +236,5 @@ func (uc *CompraUseCase) ProcessarCompra(ctx context.Context, compraData map[str
 		}(ibm)
 		wg.Wait()
 	}
-	return nil
+	return true, nil
 }
