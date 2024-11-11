@@ -134,6 +134,7 @@ func (uc *VendaUseCase) ProcessarVenda(ctx context.Context, vendaData map[string
 	for err := range errorChan {
 		if err != nil {
 			log.Printf("Erro durante o processamento: %v", err)
+			return err
 		}
 	}
 	return nil

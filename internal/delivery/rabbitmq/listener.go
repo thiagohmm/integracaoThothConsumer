@@ -1,11 +1,14 @@
-// listener.go
-package rabbitmq
+// // listener.go
+
+package listener
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 
+	"github.com/thiagohmm/integracaoThothConsumer/internal/infraestructure/cache"
 	infraestructure "github.com/thiagohmm/integracaoThothConsumer/internal/infraestructure/rabbitmq"
 	"github.com/thiagohmm/integracaoThothConsumer/internal/usecases"
 )
@@ -14,6 +17,7 @@ type Listener struct {
 	CompraUC  *usecases.CompraUseCase
 	EstoqueUC *usecases.EstoqueUseCase
 	VendaUC   *usecases.VendaUseCase
+	Cache     *cache.Cache
 	// Adicione mais usecases conforme necessário
 }
 
@@ -45,13 +49,36 @@ func (l *Listener) ListenToQueue(rabbitmqurl string) error {
 
 		processa := message["processa"].(string)
 		if processa == "compra" {
-			err = l.CompraUC.ProcessarCompra(context.Background(), message["dados"].(map[string]interface{}))
+			_, err = l.CompraUC.ProcessarCompra(context.Background(), message["dados"].(map[string]interface{}))
+			uuid := message["processo"].(string)
+			if err != nil {
+				l.Cache.AtualizaStatusProcesso(context.Background(), uuid, "erro")
+			} else {
+				log.Println("Message processed successfully")
+				l.Cache.AtualizaStatusProcesso(context.Background(), uuid, "Sucesso")
+			}
 		} else if processa == "venda" {
 			// Chame o caso de uso para venda
 			err = l.VendaUC.ProcessarVenda(context.Background(), message["dados"].(map[string]interface{}))
+
+			uuid := message["processo"].(string)
+			if err != nil {
+				l.Cache.AtualizaStatusProcesso(context.Background(), uuid, "erro")
+			} else {
+				log.Println("Message processed successfully")
+				l.Cache.AtualizaStatusProcesso(context.Background(), uuid, "Sucesso")
+			}
 		} else if processa == "estoque" {
 			// Chame o caso de uso para estoque
 			err = l.EstoqueUC.ProcessarEstoque(context.Background(), message["dados"].(map[string]interface{}))
+
+			uuid := message["processo"].(string)
+			if err != nil {
+				l.Cache.AtualizaStatusProcesso(context.Background(), uuid, "erro")
+			} else {
+				log.Println("Message processed successfully")
+				l.Cache.AtualizaStatusProcesso(context.Background(), uuid, "Sucesso")
+			}
 		}
 
 		if err != nil {

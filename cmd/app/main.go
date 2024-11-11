@@ -4,9 +4,11 @@ import (
 	"log"
 
 	"github.com/thiagohmm/integracaoThothConsumer/configuration"
-	"github.com/thiagohmm/integracaoThothConsumer/internal/delivery/rabbitmq"
+	listener "github.com/thiagohmm/integracaoThothConsumer/internal/delivery/rabbitmq"
 	"github.com/thiagohmm/integracaoThothConsumer/internal/domain/repositories"
+	"github.com/thiagohmm/integracaoThothConsumer/internal/infraestructure/cache"
 	"github.com/thiagohmm/integracaoThothConsumer/internal/infraestructure/database"
+
 	"github.com/thiagohmm/integracaoThothConsumer/internal/usecases"
 )
 
@@ -53,12 +55,14 @@ func main() {
 		log.Fatalf("RabbitMQ URL não está definida.")
 	}
 
+	cache := cache.NewCache(cfg.ENV_REDIS_ADDR, cfg.ENV_REDIS_PASSWORD)
 	// Inicializa o listener da fila RabbitMQ com o caso de uso de compra
-	rabbitmqListener := rabbitmq.Listener{
+	rabbitmqListener := listener.Listener{
 
 		CompraUC:  compraUseCase,
 		EstoqueUC: estoqueUseCase,
 		VendaUC:   vendaUseCase,
+		Cache:     cache,
 		// Adicione mais usecases conforme necessário,
 	}
 
