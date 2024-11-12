@@ -11,6 +11,7 @@ import (
 
 	"github.com/thiagohmm/integracaoThothConsumer/internal/domain/entities"
 	"github.com/valyala/fastjson"
+	"go.opentelemetry.io/otel"
 )
 
 type VendaUseCase struct {
@@ -22,8 +23,19 @@ func NewVendaUseCase(repo entities.VendaRepository) *VendaUseCase {
 }
 
 func (uc *VendaUseCase) ProcessarVenda(ctx context.Context, vendaData map[string]interface{}) error {
+	tracer := otel.Tracer("ProcessarVenda")
+	// Recuperar o UUID do contexto
+	uuid, ok := ctx.Value("uuid").(string)
+	if !ok {
+		return fmt.Errorf("UUID não encontrado no contexto")
+	}
+
+	ctx, span := tracer.Start(ctx, uuid)
+	defer span.End()
+
 	vendaJSON, err := json.Marshal(vendaData)
 	if err != nil {
+		span.RecordError(err)
 		log.Printf("Erro ao converter mapa em JSON: %v", err)
 		return err
 	}
@@ -33,12 +45,15 @@ func (uc *VendaUseCase) ProcessarVenda(ctx context.Context, vendaData map[string
 	v, err := p.ParseBytes(vendaJSON)
 	if err != nil {
 		log.Printf("Erro ao parsear JSON: %v", err)
+		span.RecordError(err)
 		return err
 	}
 
 	ibms := v.GetArray("vendas", "ibms")
 	if ibms == nil {
+		span.RecordError(err)
 		return fmt.Errorf("IBMs não encontrados no objeto de venda")
+
 	}
 
 	var wg sync.WaitGroup
@@ -59,12 +74,14 @@ func (uc *VendaUseCase) ProcessarVenda(ctx context.Context, vendaData map[string
 			dtEntrada, err := strconv.ParseInt(dtStr, 10, 64)
 			if err != nil {
 				log.Printf("Erro ao converter DT_Venda para int64: %v", err)
+				span.RecordError(err)
 				errorChan <- err
 				return
 			}
 
 			if err := uc.Repo.DeleteByIBMVenda(ctx, nroStr, dtStr); err != nil {
 				log.Printf("Erro ao deletar IBM venda: %s, erro: %v", nroStr, err)
+				span.RecordError(err)
 				errorChan <- err
 				return
 			}
@@ -82,6 +99,8 @@ func (uc *VendaUseCase) ProcessarVenda(ctx context.Context, vendaData map[string
 			vendas := vendaIbms.GetArray("vendas")
 			if len(vendas) == 0 {
 				if err := uc.Repo.SalvarVenda(ctx, novoIbm); err != nil {
+					log.Printf("Erro ao salvar IBM Venda: %v", err)
+					span.RecordError(err)
 					errorChan <- err
 					return
 				}
@@ -119,6 +138,7 @@ func (uc *VendaUseCase) ProcessarVenda(ctx context.Context, vendaData map[string
 					// Salva o IBM atualizado
 					if err := uc.Repo.SalvarVenda(ctx, novoIbm); err != nil {
 						log.Printf("Erro ao salvar novo IBM: %v", err)
+						span.RecordError(err)
 						errorChan <- err
 						return
 					}
@@ -134,6 +154,7 @@ func (uc *VendaUseCase) ProcessarVenda(ctx context.Context, vendaData map[string
 	for err := range errorChan {
 		if err != nil {
 			log.Printf("Erro durante o processamento: %v", err)
+			span.RecordError(err)
 			return err
 		}
 	}

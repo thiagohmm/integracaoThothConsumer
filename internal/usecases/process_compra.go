@@ -12,6 +12,7 @@ import (
 
 	"github.com/thiagohmm/integracaoThothConsumer/internal/domain/entities"
 	"github.com/valyala/fastjson"
+	"go.opentelemetry.io/otel"
 )
 
 type CompraUseCase struct {
@@ -77,9 +78,20 @@ func parseFloatOrDefault(value []byte) float64 {
 }
 
 func (uc *CompraUseCase) ProcessarCompra(ctx context.Context, compraData map[string]interface{}) (bool, error) {
+	tracer := otel.Tracer("ProcessarVenda")
+	// Recuperar o UUID do contexto
+	uuid, ok := ctx.Value("uuid").(string)
+	if !ok {
+		return false, fmt.Errorf("UUID não encontrado no contexto")
+	}
+
+	ctx, span := tracer.Start(ctx, uuid)
+	defer span.End()
+
 	compraJSON, err := json.Marshal(compraData)
 	if err != nil {
 		log.Printf("Erro ao converter mapa em JSON: %v", err)
+		span.RecordError(err)
 		return false, err
 	}
 
@@ -88,6 +100,7 @@ func (uc *CompraUseCase) ProcessarCompra(ctx context.Context, compraData map[str
 	v, err := p.ParseBytes(compraJSON)
 	if err != nil {
 		log.Printf("Erro ao parsear JSON: %v", err)
+		span.RecordError(err)
 		return false, err
 	}
 
@@ -100,6 +113,7 @@ func (uc *CompraUseCase) ProcessarCompra(ctx context.Context, compraData map[str
 	// Itera sobre as IBMs da compra
 	ibms := v.GetArray("compras", "ibms")
 	if ibms == nil {
+		span.RecordError(err)
 		return false, fmt.Errorf("IBMs não encontrados no objeto de compra")
 	}
 
@@ -121,6 +135,7 @@ func (uc *CompraUseCase) ProcessarCompra(ctx context.Context, compraData map[str
 			// Deleta o IBM com base no número e data
 			log.Printf("Deletando IBM compra: %s, data: %s", nroStr, dtStr)
 			if err := uc.Repo.DeleteByIBMAndEntrada(ctx, nroStr, dtStr); err != nil {
+				span.RecordError(err)
 				log.Printf("Erro ao deletar IBM compra: %s, erro: %v", nroStr, err)
 
 			}
@@ -149,6 +164,7 @@ func (uc *CompraUseCase) ProcessarCompra(ctx context.Context, compraData map[str
 			err := func() error {
 				defer func() {
 					if r := recover(); r != nil {
+						span.RecordError(err)
 						log.Printf("Erro ao processar IBM Compra: %v", r)
 					}
 				}()
@@ -159,6 +175,7 @@ func (uc *CompraUseCase) ProcessarCompra(ctx context.Context, compraData map[str
 				dtStr := string(v.GetStringBytes("compras", "dtaentrada"))
 				dtEntrada, err := strconv.ParseInt(dtStr, 10, 64)
 				if err != nil {
+					span.RecordError(err)
 					log.Printf("Erro ao converter DT_ENTRADA para int64: %v", err)
 					return err
 				}
@@ -177,6 +194,8 @@ func (uc *CompraUseCase) ProcessarCompra(ctx context.Context, compraData map[str
 				if len(notas) == 0 {
 					fmt.Println("Salvando", novoIbm)
 					if err := uc.Repo.SaveCompra(ctx, novoIbm); err != nil {
+						span.RecordError(err)
+						log.Printf("Erro ao salvar IBM Compra: %v", err)
 						return err
 					}
 				}
@@ -202,6 +221,7 @@ func (uc *CompraUseCase) ProcessarCompra(ctx context.Context, compraData map[str
 						qtdStr := stringOrDefault(produto.GetStringBytes("qtd"))
 						qtdFloat, err := strconv.ParseFloat(qtdStr, 64)
 						if err != nil {
+							span.RecordError(err)
 							log.Printf("Erro ao converter quantidade: %v", err)
 							return err
 						}
@@ -220,6 +240,7 @@ func (uc *CompraUseCase) ProcessarCompra(ctx context.Context, compraData map[str
 
 						// Salvar IBM atualizado
 						if err := uc.Repo.SaveCompra(ctx, novoIbm); err != nil {
+							span.RecordError(err)
 							log.Printf("Erro ao salvar novo IBM: %v", err)
 						}
 						saveCounter++
@@ -231,6 +252,7 @@ func (uc *CompraUseCase) ProcessarCompra(ctx context.Context, compraData map[str
 				return nil
 			}()
 			if err != nil {
+				span.RecordError(err)
 				log.Printf("Erro ao processar IBM: %v", err)
 			}
 		}(ibm)

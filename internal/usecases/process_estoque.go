@@ -12,6 +12,7 @@ import (
 
 	"github.com/thiagohmm/integracaoThothConsumer/internal/domain/entities"
 	"github.com/valyala/fastjson"
+	"go.opentelemetry.io/otel"
 )
 
 type EstoqueUseCase struct {
@@ -23,10 +24,20 @@ func NewEstoqueUseCase(repo entities.EstoqueRepository) *EstoqueUseCase {
 }
 
 func (uc *EstoqueUseCase) ProcessarEstoque(ctx context.Context, estoqueData map[string]interface{}) error {
+	tracer := otel.Tracer("ProcessarVenda")
+	// Recuperar o UUID do contexto
+	uuid, ok := ctx.Value("uuid").(string)
+	if !ok {
+		return fmt.Errorf("UUID não encontrado no contexto")
+	}
+
+	ctx, span := tracer.Start(ctx, uuid)
+	defer span.End()
 
 	estoqueJSON, err := json.Marshal(estoqueData)
 	if err != nil {
 		log.Printf("Erro ao converter mapa em JSON: %v", err)
+		span.RecordError(err)
 		return err
 	}
 
@@ -35,6 +46,7 @@ func (uc *EstoqueUseCase) ProcessarEstoque(ctx context.Context, estoqueData map[
 	v, err := p.ParseBytes(estoqueJSON)
 	if err != nil {
 		log.Printf("Erro ao parsear JSON: %v", err)
+		span.RecordError(err)
 		return err
 	}
 
@@ -85,6 +97,7 @@ func (uc *EstoqueUseCase) ProcessarEstoque(ctx context.Context, estoqueData map[
 			dtEstoque, err := strconv.ParseInt(dtStr, 10, 64)
 			if err != nil {
 				log.Printf("Erro ao converter DT_Estoque para int64: %v", err)
+				span.RecordError(err)
 				return
 			}
 
@@ -100,6 +113,7 @@ func (uc *EstoqueUseCase) ProcessarEstoque(ctx context.Context, estoqueData map[
 			produtos := ibm.GetArray("produtos")
 			if len(produtos) == 0 {
 				if err := uc.Repo.SalvarEstoque(ctx, novoIbm); err != nil {
+					span.RecordError(err)
 					log.Printf("Erro ao salvar IBM Estoque: %v", err)
 				}
 				return
@@ -125,6 +139,7 @@ func (uc *EstoqueUseCase) ProcessarEstoque(ctx context.Context, estoqueData map[
 				novoIbm.VL_CUSTO_MEDIO = vlCustoMedio
 
 				if err := uc.Repo.SalvarEstoque(ctx, novoIbm); err != nil {
+					span.RecordError(err)
 					log.Printf("Erro ao salvar novo IBM Estoque: %v", err)
 				}
 			}

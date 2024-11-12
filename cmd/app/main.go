@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 
 	"github.com/thiagohmm/integracaoThothConsumer/configuration"
@@ -10,9 +11,53 @@ import (
 	"github.com/thiagohmm/integracaoThothConsumer/internal/infraestructure/database"
 
 	"github.com/thiagohmm/integracaoThothConsumer/internal/usecases"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/exporters/jaeger"
+	"go.opentelemetry.io/otel/sdk/resource"
+	"go.opentelemetry.io/otel/sdk/trace"
+	semconv "go.opentelemetry.io/otel/semconv/v1.4.0"
 )
 
+// initTracer inicia o provedor de rastreamento do OpenTelemetry.
+func initTracer() (*trace.TracerProvider, error) {
+	exporter, err := jaeger.New(jaeger.WithCollectorEndpoint(
+		jaeger.WithEndpoint("http://localhost:14268/api/traces"),
+	))
+	if err != nil {
+		return nil, err
+	}
+
+	tp := trace.NewTracerProvider(
+		trace.WithBatcher(exporter),
+		trace.WithResource(resource.NewWithAttributes(
+			semconv.SchemaURL,
+			semconv.ServiceNameKey.String("IntegracaoThothConsumer"),
+		)),
+	)
+	otel.SetTracerProvider(tp)
+	return tp, nil
+}
+
+// main é a função principal do aplicativo.
 func main() {
+	// Inicializa o provedor de rastreamento
+	tp, err := initTracer()
+	if err != nil {
+		// Se houver um erro ao inicializar o provedor de rastreamento,
+		// o programa termina com uma mensagem de erro.
+		// Isso garante que o programa não continue a executar sem rastreamento.
+		log.Fatalf("failed to initialize tracer: %v", err)
+	}
+	defer func() {
+		if err := tp.Shutdown(context.Background()); err != nil {
+			log.Printf("Error shutting down tracer provider: %v", err)
+		}
+	}()
+
+	// Inicia um span para a operação principal.
+	ctx, span := otel.Tracer("main").Start(context.Background(), "main-operation")
+	defer span.End()
 
 	// Carrega as configurações do arquivo .env
 	cfg, err := configuration.LoadConfig("../../.env")
@@ -26,6 +71,11 @@ func main() {
 		log.Fatalf("Erro ao conectar ao banco de dados: %v", err)
 	}
 	defer db.Close()
+
+	// Inicia um span para a conexão com o banco de dados.
+	tracer := otel.Tracer("integracaoThothConsumer")
+	ctx, span = tracer.Start(context.Background(), "ConectarBanco")
+	defer span.End()
 
 	// Verifica a conexão com o banco de dados
 	if err := db.Ping(); err != nil {
@@ -66,11 +116,13 @@ func main() {
 		// Adicione mais usecases conforme necessário,
 	}
 
+	// Inicia um span para a escuta da fila RabbitMQ.
 	// Escuta a fila RabbitMQ
+	_, listenSpan := tracer.Start(ctx, "ListenToQueue")
 	if err := rabbitmqListener.ListenToQueue(rabbitmqURL); err != nil {
 		log.Fatalf("Erro ao escutar a fila RabbitMQ: %v", err)
 	}
-
+	listenSpan.End()
 	// Mantém o programa em execução indefinidamente
 	select {}
 }

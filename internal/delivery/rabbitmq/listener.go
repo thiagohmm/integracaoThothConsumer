@@ -49,8 +49,10 @@ func (l *Listener) ListenToQueue(rabbitmqurl string) error {
 
 		processa := message["processa"].(string)
 		if processa == "compra" {
-			_, err = l.CompraUC.ProcessarCompra(context.Background(), message["dados"].(map[string]interface{}))
 			uuid := message["processo"].(string)
+			ctx := context.WithValue(context.Background(), "uuid", uuid)
+			_, err = l.CompraUC.ProcessarCompra(ctx, message["dados"].(map[string]interface{}))
+
 			if err != nil {
 				l.Cache.AtualizaStatusProcesso(context.Background(), uuid, "erro")
 			} else {
@@ -59,9 +61,10 @@ func (l *Listener) ListenToQueue(rabbitmqurl string) error {
 			}
 		} else if processa == "venda" {
 			// Chame o caso de uso para venda
-			err = l.VendaUC.ProcessarVenda(context.Background(), message["dados"].(map[string]interface{}))
-
 			uuid := message["processo"].(string)
+			ctx := context.WithValue(context.Background(), "uuid", uuid)
+			err = l.VendaUC.ProcessarVenda(ctx, message["dados"].(map[string]interface{}))
+
 			if err != nil {
 				l.Cache.AtualizaStatusProcesso(context.Background(), uuid, "erro")
 			} else {
@@ -70,9 +73,10 @@ func (l *Listener) ListenToQueue(rabbitmqurl string) error {
 			}
 		} else if processa == "estoque" {
 			// Chame o caso de uso para estoque
-			err = l.EstoqueUC.ProcessarEstoque(context.Background(), message["dados"].(map[string]interface{}))
-
 			uuid := message["processo"].(string)
+			ctx := context.WithValue(context.Background(), "uuid", uuid)
+			err = l.EstoqueUC.ProcessarEstoque(ctx, message["dados"].(map[string]interface{}))
+
 			if err != nil {
 				l.Cache.AtualizaStatusProcesso(context.Background(), uuid, "erro")
 			} else {
