@@ -19,6 +19,7 @@ type Conf struct {
 	ENV_RABBITMQ       string `mapstructure:"ENV_RABBITMQ"`
 	ENV_REDIS_ADDR     string `mapstructure:"ENV_REDIS_ADDR"`
 	ENV_REDIS_PASSWORD string `mapstructure:"ENV_REDIS_PASSWORD"`
+	JAEGER_ENDPOINT    string `mapstructure:"JAEGER_ENDPOINT"`
 }
 
 type Dados struct {

@@ -5,6 +5,7 @@ import (
 	"log"
 
 	"github.com/thiagohmm/integracaoThothConsumer/configuration"
+	config "github.com/thiagohmm/integracaoThothConsumer/configuration"
 	listener "github.com/thiagohmm/integracaoThothConsumer/internal/delivery/rabbitmq"
 	"github.com/thiagohmm/integracaoThothConsumer/internal/domain/repositories"
 	"github.com/thiagohmm/integracaoThothConsumer/internal/infraestructure/cache"
@@ -19,10 +20,24 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.4.0"
 )
 
+func LoadConfig() (*config.Conf, error) {
+	// Carrega as configurações do arquivo .env
+	cfg, err := configuration.LoadConfig("../../.env")
+	if err != nil {
+		log.Fatalf("Erro ao carregar configuração: %v", err)
+	}
+	return cfg, err
+}
+
 // initTracer inicia o provedor de rastreamento do OpenTelemetry.
 func initTracer() (*trace.TracerProvider, error) {
+	cfg, err := LoadConfig()
+	if err != nil {
+		log.Fatalf("Erro ao carregar configuração: %v", err)
+	}
 	exporter, err := jaeger.New(jaeger.WithCollectorEndpoint(
-		jaeger.WithEndpoint("http://localhost:14268/api/traces"),
+
+		jaeger.WithEndpoint(cfg.JAEGER_ENDPOINT),
 	))
 	if err != nil {
 		return nil, err
@@ -42,6 +57,13 @@ func initTracer() (*trace.TracerProvider, error) {
 // main é a função principal do aplicativo.
 func main() {
 	// Inicializa o provedor de rastreamento
+	// Carrega as configurações do arquivo .env
+	cfg, err := LoadConfig()
+	if err != nil {
+		log.Fatalf("Erro ao carregar configuração: %v", err)
+	}
+
+	// Inicializa o provedor de rastreamento
 	tp, err := initTracer()
 	if err != nil {
 		// Se houver um erro ao inicializar o provedor de rastreamento,
@@ -58,13 +80,6 @@ func main() {
 	// Inicia um span para a operação principal.
 	ctx, span := otel.Tracer("main").Start(context.Background(), "main-operation")
 	defer span.End()
-
-	// Carrega as configurações do arquivo .env
-	cfg, err := configuration.LoadConfig("../../.env")
-	if err != nil {
-		log.Fatalf("Erro ao carregar configuração: %v", err)
-	}
-
 	// Conecta ao banco de dados
 	db, err := database.ConectarBanco(cfg)
 	if err != nil {
