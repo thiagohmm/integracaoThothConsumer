@@ -22,16 +22,27 @@ services:
     ports:
         - 5672:5672
         - 15672:15672
-    volumes:
-        - ~/.docker-conf/rabbitmq/data/:/var/lib/rabbitmq/
-        - ~/.docker-conf/rabbitmq/log/:/var/log/rabbitmq
     networks:
         - integracao
 
+  jaeger:
+    image: jaegertracing/jaeger:2.2.0
+    container_name: jaeger
+    ports:
+      - "16686:16686" # Jaeger UI
+      - "4317:4317"   # OpenTelemetry gRPC
+      - "4318:4318"   # OpenTelemetry HTTP
+      - "5778:5778"   # Configuration service
+      - "9411:9411"   # Zipkin compatibility
+    restart: unless-stopped
+    networks:
+      - integracao
+
 networks:
-  integracao::
+  integracao:
     driver: bridge
 
 volumes:
   data:
     driver: local
+
