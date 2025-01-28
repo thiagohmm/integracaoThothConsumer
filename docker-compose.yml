@@ -6,7 +6,7 @@ services:
     container_name: keydb
     # command: keydb-server /etc/keydb/redis.conf --server-threads 2 --active-replica yes --replicaof 192.168.1.1 6379
     # command: keydb-server /etc/keydb/redis.conf --server-threads 2 --active-replica yes --replicaof 192.168.1.2 6379
-    command: keydb-server /etc/keydb/redis.conf --server-threads 2
+    command: keydb-server /etc/keydb/redis.conf --server-threads 2 --requirepass eYVX7EwVmmxKPCDmwMtyKVge8oLd2t81
     volumes:
       - ./docker-conf/redis.conf:/etc/keydb/redis.conf
       - data:/data
