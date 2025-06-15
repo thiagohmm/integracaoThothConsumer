@@ -22,7 +22,7 @@ import (
 
 func LoadConfig() (*config.Conf, error) {
 	// Carrega as configurações do arquivo .env
-	cfg, err := configuration.LoadConfig("../../.env")
+	cfg, err := configuration.LoadConfig("./.env")
 	if err != nil {
 		log.Fatalf("Erro ao carregar configuração: %v", err)
 	}

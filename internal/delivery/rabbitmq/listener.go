@@ -41,9 +41,11 @@ func (l *Listener) ListenToQueue(rabbitmqurl string) error {
 	}
 
 	for msg := range msgs {
+		var processErr error // Initialize err for use case processing
 		var message map[string]interface{}
 		if err := json.Unmarshal(msg.Body, &message); err != nil {
-			fmt.Println("Error parsing message:", err)
+			log.Printf("Error parsing message JSON: %v, raw message: %s", err, string(msg.Body))
+			msg.Nack(false, false) // NACK the message
 			continue
 		}
 
@@ -51,42 +53,46 @@ func (l *Listener) ListenToQueue(rabbitmqurl string) error {
 		if processa == "compra" {
 			uuid := message["processo"].(string)
 			ctx := context.WithValue(context.Background(), "uuid", uuid)
-			_, err = l.CompraUC.ProcessarCompra(ctx, message["dados"].(map[string]interface{}))
+			_, processErr = l.CompraUC.ProcessarCompra(ctx, message["dados"].(map[string]interface{}))
 
-			if err != nil {
+			if processErr != nil {
 				l.Cache.AtualizaStatusProcesso(context.Background(), uuid, "erro")
+				log.Printf("Error processing '%s' for UUID %s: %v", processa, uuid, processErr)
 			} else {
-				log.Println("Message processed successfully")
 				l.Cache.AtualizaStatusProcesso(context.Background(), uuid, "Sucesso")
+				log.Printf("Successfully processed '%s' for UUID %s", processa, uuid)
 			}
 		} else if processa == "venda" {
 			// Chame o caso de uso para venda
 			uuid := message["processo"].(string)
 			ctx := context.WithValue(context.Background(), "uuid", uuid)
-			err = l.VendaUC.ProcessarVenda(ctx, message["dados"].(map[string]interface{}))
+			processErr = l.VendaUC.ProcessarVenda(ctx, message["dados"].(map[string]interface{}))
 
-			if err != nil {
+			if processErr != nil {
 				l.Cache.AtualizaStatusProcesso(context.Background(), uuid, "erro")
+				log.Printf("Error processing '%s' for UUID %s: %v", processa, uuid, processErr)
 			} else {
-				log.Println("Message processed successfully")
 				l.Cache.AtualizaStatusProcesso(context.Background(), uuid, "Sucesso")
+				log.Printf("Successfully processed '%s' for UUID %s", processa, uuid)
 			}
 		} else if processa == "estoque" {
 			// Chame o caso de uso para estoque
 			uuid := message["processo"].(string)
 			ctx := context.WithValue(context.Background(), "uuid", uuid)
-			err = l.EstoqueUC.ProcessarEstoque(ctx, message["dados"].(map[string]interface{}))
+			processErr = l.EstoqueUC.ProcessarEstoque(ctx, message["dados"].(map[string]interface{}))
 
-			if err != nil {
+			if processErr != nil {
 				l.Cache.AtualizaStatusProcesso(context.Background(), uuid, "erro")
+				log.Printf("Error processing '%s' for UUID %s: %v", processa, uuid, processErr)
 			} else {
-				log.Println("Message processed successfully")
 				l.Cache.AtualizaStatusProcesso(context.Background(), uuid, "Sucesso")
+				log.Printf("Successfully processed '%s' for UUID %s", processa, uuid)
 			}
 		}
 
-		if err != nil {
-			fmt.Println("Error processing message:", err)
+		// After processing, decide whether to ACK or NACK
+		if processErr != nil {
+			msg.Nack(false, false)
 		} else {
 			msg.Ack(false)
 		}
