@@ -2,6 +2,7 @@ package configuration
 
 import (
 	"fmt"
+	"log"
 	"regexp"
 	"strconv"
 
@@ -12,13 +13,15 @@ type Conf struct {
 	DBDriver           string `mapstructure:"DB_DIALECT"`
 	DBUser             string `mapstructure:"DB_USER"`
 	DBPassword         string `mapstructure:"DB_PASSWD"`
+	DBSchema           string `mapstructure:"DB_SCHEMA"`
 	DBConnect          string `mapstructure:"DB_CONNECTSTRING"`
 	ServiceName        string
 	Port               int
 	Host               string
 	ENV_RABBITMQ       string `mapstructure:"ENV_RABBITMQ"`
-	ENV_REDIS_ADDR     string `mapstructure:"ENV_REDIS_ADDR"`
+	ENV_REDIS_ADDR     string `mapstructure:"ENV_REDIS_ADDRESS"`
 	ENV_REDIS_PASSWORD string `mapstructure:"ENV_REDIS_PASSWORD"`
+	ENV_REDIS_EXPIRE   int    `mapstructure:"ENV_REDIS_EXPIRE"`
 	JAEGER_ENDPOINT    string `mapstructure:"JAEGER_ENDPOINT"`
 }
 
@@ -65,11 +68,22 @@ func LoadConfig(path string) (*Conf, error) {
 	err := viper.ReadInConfig()
 	if err != nil {
 		fmt.Println("Não foi possível ler o arquivo .env, tentando variáveis de ambiente")
-	}
-
-	err = viper.Unmarshal(&cfg)
-	if err != nil {
-		panic(err)
+		cfg.DBDriver = viper.GetString("DB_DIALECT")
+		cfg.DBUser = viper.GetString("DB_USER")
+		cfg.DBPassword = viper.GetString("DB_PASSWD")
+		cfg.DBSchema = viper.GetString("DB_SCHEMA")
+		cfg.DBConnect = viper.GetString("DB_CONNECTSTRING")
+		cfg.ENV_RABBITMQ = viper.GetString("ENV_RABBITMQ")
+		cfg.JAEGER_ENDPOINT = viper.GetString("JAEGER_ENDPOINT")
+		cfg.ENV_REDIS_ADDR = viper.GetString("ENV_REDIS_ADDRESS")
+		cfg.ENV_REDIS_PASSWORD = viper.GetString("ENV_REDIS_PASSWORD")
+		cfg.ENV_REDIS_EXPIRE = viper.GetInt("ENV_REDIS_EXPIRE")
+	} else {
+		err = viper.Unmarshal(&cfg)
+		if err != nil {
+			//panic(err)
+			log.Printf("Erro ao carregar configurações: %v", err)
+		}
 	}
 
 	// Extrair os dados da string de conexão

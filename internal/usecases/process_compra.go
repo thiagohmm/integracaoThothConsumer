@@ -7,7 +7,6 @@ import (
 	"log"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/thiagohmm/integracaoThothConsumer/internal/domain/entities"
@@ -77,16 +76,22 @@ func parseFloatOrDefault(value []byte) float64 {
 	return floatValue
 }
 
+// ProcessarCompra realiza o processamento de compra de forma síncrona,
+// sem o uso de goroutines para deleção e salvamento.
 func (uc *CompraUseCase) ProcessarCompra(ctx context.Context, compraData map[string]interface{}) (bool, error) {
-	tracer := otel.Tracer("ProcessarVenda")
+	tracer := otel.Tracer("ProcessarCompra")
 	// Recuperar o UUID do contexto
 	uuid, ok := ctx.Value("uuid").(string)
 	if !ok {
 		return false, fmt.Errorf("UUID não encontrado no contexto")
 	}
+	ctxDeleteTimeout, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 
 	ctx, span := tracer.Start(ctx, uuid)
 	defer span.End()
+
+	var dataSave []entities.Compra
 
 	compraJSON, err := json.Marshal(compraData)
 	if err != nil {
@@ -94,6 +99,14 @@ func (uc *CompraUseCase) ProcessarCompra(ctx context.Context, compraData map[str
 		span.RecordError(err)
 		return false, err
 	}
+
+	loc, err := time.LoadLocation("America/Sao_Paulo")
+	if err != nil {
+		log.Printf("Falha ao carregar localização: %v", err)
+		loc = time.Local
+		span.RecordError(err)
+	}
+	dtNow := string(time.Now().In(loc).Format("2006-01-02T15:04:05.000Z"))
 
 	// Parsear o JSON usando fastjson
 	var p fastjson.Parser
@@ -104,159 +117,123 @@ func (uc *CompraUseCase) ProcessarCompra(ctx context.Context, compraData map[str
 		return false, err
 	}
 
-	// Limite de goroutines ativas
-	const maxGoroutines = 10
-	semaphore := make(chan struct{}, maxGoroutines)
-	var wg sync.WaitGroup
-
-	deleteCounter := 0
-	// Itera sobre as IBMs da compra
+	// Recupera o array de IBMs da compra
 	ibms := v.GetArray("compras", "ibms")
 	if ibms == nil {
-		span.RecordError(err)
-		return false, fmt.Errorf("IBMs não encontrados no objeto de compra")
+		span.RecordError(fmt.Errorf("IBMs não encontrados no objeto de compra"))
+		return false, err
 	}
 
 	for _, compraIbms := range ibms {
+		nroStr := sanitizeIBM(string(compraIbms.GetStringBytes("nro")))
+		// Obtém a data de entrada e remove caracteres desnecessários
+		dtaentrada := string(v.GetStringBytes("compras", "dtaentrada"))
+		dtStr := strings.ReplaceAll(dtaentrada, "-", "")
 
-		wg.Add(1)
-		semaphore <- struct{}{}
+		log.Printf("Verificando se existe compra: %s, data: %s", nroStr, dtStr)
+		existsCompra, err := uc.Repo.CheckIfExists(ctxDeleteTimeout, nroStr, dtStr)
+		if err != nil {
+			span.RecordError(err)
+			log.Printf("Erro ao verificar existência de compra: %s, erro: %v", nroStr, err)
+			return false, err
+		}
 
-		go func(estoqueIbms *fastjson.Value) {
-			defer wg.Done()
-			defer func() { <-semaphore }() // Libera o slot no semáforo
+		if existsCompra {
 
-			nroStr := sanitizeIBM(string(compraIbms.GetStringBytes("nro")))
-
-			// Obtém a data de entrada
-			dtaentrada := string(v.GetStringBytes("compras", "dtaentrada"))
-			dtStr := strings.ReplaceAll(dtaentrada, "-", "")
-
-			// Deleta o IBM com base no número e data
-			log.Printf("Deletando IBM compra: %s, data: %s", nroStr, dtStr)
-			if err := uc.Repo.DeleteByIBMAndEntrada(ctx, nroStr, dtStr); err != nil {
+			log.Printf("Deletando IBM compra: %s, data: %s para UUID: %s", nroStr, dtStr, uuid)
+			if err := uc.Repo.DeleteByIBMAndEntrada(ctxDeleteTimeout, nroStr, dtStr, uuid); err != nil {
 				span.RecordError(err)
 				log.Printf("Erro ao deletar IBM compra: %s, erro: %v", nroStr, err)
-
+				return false, err
 			}
-
-			deleteCounter++
-			if deleteCounter%100 == 0 {
-				time.Sleep(500 * time.Millisecond)
-			}
-		}(compraIbms)
+		}
 	}
 
-	// Espera todas as goroutines de deleção terminarem
-	wg.Wait()
-
-	// Processa e salva as IBMs em goroutines
-	saveCounter := 0
-	// Itera sobre as IBMs para salvar
+	// Processar e salvar os IBMs de compra (de forma sequencial)
+	log.Printf("Iniciando salvamento de IBMs da compra")
 	for _, ibm := range ibms {
-		wg.Add(1)
-		semaphore <- struct{}{}
+		nroStr := sanitizeIBM(string(ibm.GetStringBytes("nro")))
+		dtStr := string(v.GetStringBytes("compras", "dtaentrada"))
+		dtEntrada, err := strconv.ParseInt(dtStr, 10, 64)
+		if err != nil {
+			span.RecordError(err)
+			log.Printf("Erro ao converter DT_ENTRADA para int64: %v", err)
+			return false, err
+		}
+		novoIbm := entities.Compra{
+			CD_IBM_LOJA:       nroStr,
+			RAZAO_SOCIAL_LOJA: stringOrDefault(ibm.GetStringBytes("razao")),
+			DT_ENTRADA:        dtEntrada,
+			NM_SISTEMA:        stringOrDefault(ibm.GetStringBytes("app")),
+			SRC_LOAD:          "API/Integração/Thoth",
+			DT_LOAD:           dtNow,
+		}
 
-		func(ibm *fastjson.Value) {
-			defer wg.Done()
-			defer func() { <-semaphore }()
+		notas := ibm.GetArray("notas")
 
-			err := func() error {
-				defer func() {
-					if r := recover(); r != nil {
-						span.RecordError(err)
-						log.Printf("Erro ao processar IBM Compra: %v", r)
-					}
-				}()
+		// Se houver notas, processar cada uma
+		for _, nota := range notas {
+			novoIbm.NR_NOTA_FISCAL = stringOrDefault(nota.GetStringBytes("nro"))
+			novoIbm.NR_SERIE_NOTA = stringOrDefault(nota.GetStringBytes("serie"))
+			emissaoStr := stringOrDefault(nota.GetStringBytes("emissao"))
 
-				nroStr := sanitizeIBM(string(ibm.GetStringBytes("nro")))
-
-				// Obtém a data de emissão da nota
-				dtStr := string(v.GetStringBytes("compras", "dtaentrada"))
-				dtEntrada, err := strconv.ParseInt(dtStr, 10, 64)
-				if err != nil {
-					span.RecordError(err)
-					log.Printf("Erro ao converter DT_ENTRADA para int64: %v", err)
-					return err
-				}
-				novoIbm := entities.Compra{
-					CD_IBM_LOJA:       nroStr,
-					RAZAO_SOCIAL_LOJA: stringOrDefault(ibm.GetStringBytes("razao")),
-					DT_ENTRADA:        dtEntrada,
-					NM_SISTEMA:        stringOrDefault(ibm.GetStringBytes("app")),
-					SRC_LOAD:          "API/Integração/Thoth",
-					DT_LOAD:           string(time.Now().UTC().Format("2006-01-02T15:04:05.000Z")), // Formatar DT_LOAD corretamente
-				}
-
-				// novoIbm.DT_ENTRADA = dtEntrada
-
-				notas := ibm.GetArray("notas")
-				if len(notas) == 0 {
-					fmt.Println("Salvando", novoIbm)
-					if err := uc.Repo.SaveCompra(ctx, novoIbm); err != nil {
-						span.RecordError(err)
-						log.Printf("Erro ao salvar IBM Compra: %v", err)
-						return err
-					}
-				}
-
-				for _, nota := range notas {
-					novoIbm.NR_NOTA_FISCAL = stringOrDefault(nota.GetStringBytes("nro"))
-					novoIbm.NR_SERIE_NOTA = stringOrDefault(nota.GetStringBytes("serie"))
-					novoIbm.DT_EMISSAO_NOTA = int64(parseFloatOrDefault(nota.Get("emissao").GetStringBytes()))
-					novoIbm.CNPJ_FORNECEDOR = stringOrDefault(nota.GetStringBytes("fornecedor", "cnpj"))
-					novoIbm.NM_FORNECEDOR = stringOrDefault(nota.GetStringBytes("fornecedor", "nome"))
-					novoIbm.QT_PESO = float64(int64(parseFloatOrDefault(nota.Get("peso").GetStringBytes())))
-					novoIbm.VL_TOTAL_IPI = parseFloat(nota.Get("total", "ipi"))
-					novoIbm.VL_TOTAL_ICMS = parseFloat(nota.Get("total", "icms"))
-					novoIbm.VL_TOTAL_COMPRA = parseFloat(nota.Get("total", "compra"))
-					novoIbm.CNPJ_TRANSPORTADORA = stringOrDefault(nota.GetStringBytes("transportador", "cnpj"))
-					novoIbm.NM_TRANSPORTADORA = stringOrDefault(nota.GetStringBytes("transportador", "nome"))
-					novoIbm.CD_CHAVE_NOTA_FISCAL = stringOrDefault(nota.GetStringBytes("chavexml"))
-
-					// Processando produtos
-					produtos := nota.GetArray("produtos")
-					for _, produto := range produtos {
-						novoIbm.CD_EAN_PRODUTO = stringOrDefault(produto.GetStringBytes("ean"))
-						qtdStr := stringOrDefault(produto.GetStringBytes("qtd"))
-						qtdFloat, err := strconv.ParseFloat(qtdStr, 64)
-						if err != nil {
-							span.RecordError(err)
-							log.Printf("Erro ao converter quantidade: %v", err)
-							return err
-						}
-						novoIbm.QT_PRODUTO = qtdFloat
-						novoIbm.VL_PRECO_COMPRA = parseFloat(produto.Get("preco"))
-						novoIbm.DS_PRODUTO = stringOrDefault(produto.GetStringBytes("descricao"))
-						novoIbm.CD_TP_PRODUTO = stringOrDefault(produto.GetStringBytes("tipo"))
-						novoIbm.VL_ALIQUOTA_IPI = parseFloat(produto.Get("impostos", "ipi", "aliquota"))
-						novoIbm.VL_IPI = parseFloat(produto.Get("impostos", "ipi", "vlr"))
-						novoIbm.VL_ALIQUOTA_ICMS = parseFloat(produto.Get("impostos", "icms", "aliquota"))
-						novoIbm.VL_ICMS = parseFloat(produto.Get("impostos", "icms", "vlr"))
-						novoIbm.VL_ALIQUOTA_PIS = parseFloat(produto.Get("impostos", "pis", "aliquota"))
-						novoIbm.VL_PIS = parseFloat(produto.Get("impostos", "pis", "vlr"))
-						novoIbm.VL_ALIQUOTA_COFINS = parseFloat(produto.Get("impostos", "cofins", "aliquota"))
-						novoIbm.VL_COFINS = parseFloat(produto.Get("impostos", "cofins", "vlr"))
-
-						// Salvar IBM atualizado
-						if err := uc.Repo.SaveCompra(ctx, novoIbm); err != nil {
-							span.RecordError(err)
-							log.Printf("Erro ao salvar novo IBM: %v", err)
-						}
-						saveCounter++
-						if saveCounter%100 == 0 {
-							time.Sleep(500 * time.Millisecond)
-						}
-					}
-				}
-				return nil
-			}()
+			if emissaoStr == "" {
+				emissaoStr = "0" // optionally use a default value or skip processing this nota
+			}
+			emissaoInt, err := strconv.ParseInt(emissaoStr, 10, 64)
 			if err != nil {
 				span.RecordError(err)
-				log.Printf("Erro ao processar IBM: %v", err)
+				log.Printf("Erro ao converter DT_EMISSAO_NOTA para int64: %v", err)
+				continue
 			}
-		}(ibm)
-		wg.Wait()
+			novoIbm.DT_EMISSAO_NOTA = emissaoInt
+			novoIbm.CNPJ_FORNECEDOR = stringOrDefault(nota.GetStringBytes("fornecedor", "cnpj"))
+			novoIbm.NM_FORNECEDOR = stringOrDefault(nota.GetStringBytes("fornecedor", "nome"))
+			novoIbm.QT_PESO = float64(int64(parseFloatOrDefault(nota.Get("peso").GetStringBytes())))
+			novoIbm.VL_TOTAL_IPI = parseFloat(nota.Get("total", "ipi"))
+			novoIbm.VL_TOTAL_ICMS = parseFloat(nota.Get("total", "icms"))
+			novoIbm.VL_TOTAL_COMPRA = parseFloat(nota.Get("total", "compra"))
+			novoIbm.CNPJ_TRANSPORTADORA = stringOrDefault(nota.GetStringBytes("transportador", "cnpj"))
+			novoIbm.NM_TRANSPORTADORA = stringOrDefault(nota.GetStringBytes("transportador", "nome"))
+			novoIbm.CD_CHAVE_NOTA_FISCAL = stringOrDefault(nota.GetStringBytes("chavexml"))
+
+			// Processar produtos da nota
+			produtos := nota.GetArray("produtos")
+			for _, produto := range produtos {
+				novoIbm.CD_EAN_PRODUTO = stringOrDefault(produto.GetStringBytes("ean"))
+				qtdStr := stringOrDefault(produto.GetStringBytes("qtd"))
+				qtdFloat, err := strconv.ParseFloat(qtdStr, 64)
+				if err != nil {
+					span.RecordError(err)
+					log.Printf("Erro ao converter quantidade: %v", err)
+					continue
+				}
+				novoIbm.QT_PRODUTO = qtdFloat
+				novoIbm.VL_PRECO_COMPRA = parseFloat(produto.Get("preco"))
+				novoIbm.DS_PRODUTO = stringOrDefault(produto.GetStringBytes("descricao"))
+				novoIbm.CD_TP_PRODUTO = stringOrDefault(produto.GetStringBytes("tipo"))
+				novoIbm.VL_ALIQUOTA_IPI = parseFloat(produto.Get("impostos", "ipi", "aliquota"))
+				novoIbm.VL_IPI = parseFloat(produto.Get("impostos", "ipi", "vlr"))
+				novoIbm.VL_ALIQUOTA_ICMS = parseFloat(produto.Get("impostos", "icms", "aliquota"))
+				novoIbm.VL_ICMS = parseFloat(produto.Get("impostos", "icms", "vlr"))
+				novoIbm.VL_ALIQUOTA_PIS = parseFloat(produto.Get("impostos", "pis", "aliquota"))
+				novoIbm.VL_PIS = parseFloat(produto.Get("impostos", "pis", "vlr"))
+				novoIbm.VL_ALIQUOTA_COFINS = parseFloat(produto.Get("impostos", "cofins", "aliquota"))
+				novoIbm.VL_COFINS = parseFloat(produto.Get("impostos", "cofins", "vlr"))
+
+				dataSave = append(dataSave, novoIbm)
+			}
+		}
 	}
+
+	if err := uc.Repo.SalvarCompras(ctx, dataSave, uuid); err != nil {
+		log.Printf("Erro ao salvar compras: %v", err)
+		span.RecordError(err)
+		return false, err
+	}
+	log.Printf("Compras salvas com sucesso: %d registros", len(dataSave))
+	// Se tudo ocorrer bem, retornar true
+	// e nil para o erro
+
 	return true, nil
 }
